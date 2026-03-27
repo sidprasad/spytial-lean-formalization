@@ -1,8 +1,10 @@
 /-
 # Spytial: Spatial Semantics
-* A program is a finite set of signed spytial constraints.
-* Its denotation is the set of realizations (layouts)
-* that satisfy those constraints.
+* A program is a finite set of qualified spytial constraints.
+* Each constraint carries a `HoldsMode` — currently `always` or `never` —
+  mirroring the YAML `hold:` field and leaving room for future modalities.
+* The denotation of a program is the set of well-formed realizations
+  that satisfy those qualified constraints.
 -/
 
 import Mathlib.Data.Finset.Basic
@@ -45,6 +47,8 @@ def leftOf    (b₁ b₂ : Box) : Prop := b₁.x_tl + b₁.width  < b₂.x_tl
 def above     (b₁ b₂ : Box) : Prop := b₁.y_tl + b₁.height < b₂.y_tl
 /--
 Negated ordering constraints use the corresponding non-strict separator.
+Note: this is direction inversion (matching spytial-core's implementation),
+not pure logical negation of the strict inequality.
 -/
 def leftOfEq  (b₁ b₂ : Box) : Prop := b₁.x_tl + b₁.width  ≤ b₂.x_tl
 def aboveEq   (b₁ b₂ : Box) : Prop := b₁.y_tl + b₁.height ≤ b₂.y_tl
@@ -130,13 +134,25 @@ inductive Constraint where
 deriving DecidableEq
 
 /--
-Programs may negate individual constraints (`NOT ...`). We model that directly
-as signed atomic constraints rather than duplicating every constructor with a
-negated variant.
+Modal qualifier for constraints, mirroring the YAML `hold:` field.
+Currently supports `always` (default) and `never` (negation).
+Designed to be extensible for future modalities.
 -/
-inductive SignedConstraint where
-| pos : Constraint → SignedConstraint
-| neg : Constraint → SignedConstraint
+inductive HoldsMode where
+  | always
+  | never
+  -- future: | sometimes | eventually | ...
+deriving DecidableEq, Repr
+
+/--
+A constraint paired with its modal qualifier. This replaces the former
+`SignedConstraint` type, aligning with spytial-core where each
+`ConstraintOperation` carries a `negated : boolean` field, and
+with the YAML syntax `hold: never`.
+-/
+structure QualifiedConstraint where
+  constraint : Constraint
+  holds : HoldsMode := .always
 deriving DecidableEq
 
 --------------------------------------------------------------------------------
@@ -160,12 +176,15 @@ def sat_orientation (R : Realization) : Selector₂ → Direction → Prop
 | X, .directlyAbove   => lift₂ R X (fun b₁ b₂ => above b₂ b₁ ∧ aligned_v b₁ b₂)
 | X, .directlyBelow   => lift₂ R X (fun b₁ b₂ => above b₁ b₂ ∧ aligned_v b₁ b₂)
 
-def sat_neg_size (R : Realization) (w h : ℚ) (S : Selector₁) : Prop :=
-  lift₁ R S (fun b => b.width ≠ w ∨ b.height ≠ h)
+/--
+Negated orientation uses direction inversion with non-strict separators,
+matching spytial-core's `negateAtomicConstraint` implementation.
+NOT(A left-of B) becomes B ≤ A (reversed, non-strict) rather than
+the pure logical ¬(A < B) = A ≥ B.
 
-def sat_neg_hide (R : Realization) (S : Selector₁) : Prop :=
-  ∀ a ∈ S, ∃ b, R a = some b
-
+For `directly*` variants, De Morgan distributes over the conjunction:
+NOT(leftOf ∧ aligned) = NOT(leftOf) ∨ NOT(aligned).
+-/
 def sat_neg_orientation (R : Realization) : Selector₂ → Direction → Prop
 | X, .left            => lift₂ R X leftOfEq
 | X, .right           => lift₂ R X (fun b₁ b₂ => leftOfEq b₂ b₁)
@@ -180,6 +199,11 @@ def sat_align (R : Realization) : Selector₂ → AlignDir → Prop
 | X, .horizontal => lift₂ R X aligned_h
 | X, .vertical   => lift₂ R X aligned_v
 
+/--
+Negated alignment: the two nodes must differ on the aligned axis.
+Produces a disjunction matching spytial-core's `negateAtomicConstraint`
+for `AlignmentConstraint`.
+-/
 def sat_neg_align (R : Realization) : Selector₂ → AlignDir → Prop
 | X, .horizontal => lift₂ R X (fun b₁ b₂ => above b₁ b₂ ∨ above b₂ b₁)
 | X, .vertical   => lift₂ R X (fun b₁ b₂ => leftOf b₁ b₂ ∨ leftOf b₂ b₁)
@@ -210,16 +234,17 @@ def sat_group₂_core (R : Realization) (X : Selector₂) : Prop :=
     ∀ a ∈ firstOf X,
       ∀ b, ((∃ bb, R b = some bb ∧ contains (fam a) bb) ↔ (a,b) ∈ X)
 
-/-- Negated unary grouping: no boundary contains exactly the selected atoms. -/
-def sat_neg_group₁_core (R : Realization) (S : Selector₁) : Prop :=
-  ¬ sat_group₁_core R S
-
 /--
-Negated keyed grouping is checked fiberwise: for each key `a`, the associated
-unary group `fiber X a` fails unary grouping.
+Negated keyed grouping is checked fiberwise: for each key `a`, no boundary
+can contain exactly the atoms in `fiber X a`. This matches spytial-core,
+where a negated `GroupByField` independently negates each key's group.
+
+Note: fiberwise negation is strictly stronger than the global negation
+`¬ sat_group₂_core R X` (which only requires that no single *family*
+works for all keys simultaneously).
 -/
 def sat_neg_group₂_core (R : Realization) (X : Selector₂) : Prop :=
-  ∀ a ∈ firstOf X, sat_neg_group₁_core R (fiber X a)
+  ∀ a ∈ firstOf X, ¬ sat_group₁_core R (fiber X a)
 
 
 ---- Cyclic -------
@@ -341,7 +366,11 @@ noncomputable def sat_neg_cyclic (R : Realization) (X : Selector₂) (rot : Rota
   | .clockwise        => sat_neg_cyclic_cw  R X
   | .counterclockwise => sat_neg_cyclic_ccw R X
 
-/-- Per-constraint satisfaction predicate. -/
+--------------------------------------------------------------------------------
+-- Satisfaction Predicates
+--------------------------------------------------------------------------------
+
+/-- Per-constraint satisfaction predicate (positive / `holds: always`). -/
 def modelsC (R : Realization) : Constraint → Prop
 | .orientation X d => sat_orientation      R X d
 | .align       X a => sat_align       R X a
@@ -352,47 +381,66 @@ def modelsC (R : Realization) : Constraint → Prop
 | .cyclic      X r => sat_cyclic      R X r
 
 /--
-Satisfaction for signed constraints. Negation is pushed down to the selected
-local obligations, not applied to the outer selector quantification.
--/
-def modelsSC (R : Realization) : SignedConstraint → Prop
-| .pos c => modelsC R c
-| .neg (.orientation X d) => sat_neg_orientation R X d
-| .neg (.align X a)       => sat_neg_align R X a
-| .neg (.cyclic X r)      => sat_neg_cyclic R X r
-| .neg (.group₁ S)        => sat_neg_group₁_core R S
-| .neg (.group₂ X _)      => sat_neg_group₂_core R X
-| .neg (.size w h S)      => sat_neg_size R w h S
-| .neg (.hideatom S)      => sat_neg_hide R S
+Negated constraint satisfaction (`holds: never`).
 
-@[simp] lemma modelsSC_pos (R : Realization) (c : Constraint) :
-  modelsSC R (.pos c) ↔ modelsC R c := by
+For orientation, alignment, and cyclic constraints, negation uses
+*direction inversion* (matching spytial-core's implementation), not
+pure logical ¬.  For groups, negation asserts that no rectangular
+boundary can contain exactly the specified atoms (group₁) or that
+every key's fiber independently fails grouping (group₂).
+
+Note: `size` and `hideatom` negation uses pure logical ¬ of the
+positive predicate.  These combinations are not currently expressible
+in spytial-core's YAML syntax.
+-/
+def modelsNegC (R : Realization) : Constraint → Prop
+| .orientation X d => sat_neg_orientation R X d
+| .align X a       => sat_neg_align R X a
+| .cyclic X r      => sat_neg_cyclic R X r
+| .group₁ S        => ¬ sat_group₁_core R S
+| .group₂ X _      => sat_neg_group₂_core R X
+| .size w h S      => ¬ sat_size R w h S
+| .hideatom S      => ¬ sat_hide R S
+
+/--
+Satisfaction for qualified constraints.  Dispatches to `modelsC` or
+`modelsNegC` based on the `HoldsMode`.
+-/
+def modelsQC (R : Realization) : QualifiedConstraint → Prop
+| ⟨c, .always⟩ => modelsC R c
+| ⟨c, .never⟩  => modelsNegC R c
+
+@[simp] lemma modelsQC_always (R : Realization) (c : Constraint) :
+  modelsQC R ⟨c, .always⟩ ↔ modelsC R c := by
   rfl
 
-
-
+@[simp] lemma modelsQC_never (R : Realization) (c : Constraint) :
+  modelsQC R ⟨c, .never⟩ ↔ modelsNegC R c := by
+  rfl
 
 
 --------- Semantics ---------
 
 /--
- From a spatial perspective, the semantics of a program (set of signed
+ From a spatial perspective, the semantics of a program (set of qualified
  constraints) is the set of well-formed realizations that satisfy all of them.
 
- Program composition is set union.
- and a realization satisfies a program if it satisfies each signed constraint.
+ Program composition is set union,
+ and a realization satisfies a program if it satisfies each qualified constraint.
 -/
 
-abbrev Program := Finset SignedConstraint
+abbrev Program := Finset QualifiedConstraint
 
 def compose (P Q : Program) : Program := P ∪ Q
 
 
-/-- For a program `P`, `Gs` lists all group boundaries actually used by its group constraints. -/
+/-- For a program `P`, `Gs` lists all group boundaries actually used by its
+    positive group constraints.  Negated groups do not contribute boundaries;
+    they assert non-existence via `modelsNegC`. -/
 def groupWitnesses (R : Realization) (P : Program) (Gs : Finset GroupBoundary) : Prop :=
-  (∀ S,      SignedConstraint.pos (Constraint.group₁ S) ∈ P →
+  (∀ S,      (⟨Constraint.group₁ S, .always⟩ : QualifiedConstraint) ∈ P →
      ∃ g ∈ Gs, ∀ a, ((∃ b, R a = some b ∧ contains g b) ↔ a ∈ S)) ∧
-  (∀ X addE, SignedConstraint.pos (Constraint.group₂ X addE) ∈ P →
+  (∀ X addE, (⟨Constraint.group₂ X addE, .always⟩ : QualifiedConstraint) ∈ P →
      ∃ fam : Atom → GroupBoundary,
        (∀ a ∈ firstOf X, fam a ∈ Gs) ∧
        (∀ a ∈ firstOf X, ∀ b, ((∃ bb, R b = some bb ∧ contains (fam a) bb) ↔ (a,b) ∈ X)))
@@ -402,7 +450,7 @@ def modelsP (R : Realization) (P : Program) : Prop :=
   ∃ Gs : Finset GroupBoundary,
     groupWitnesses R P Gs ∧
     groupsSubsumptionGlobal R Gs ∧
-    (∀ c ∈ P, modelsSC R c)
+    (∀ c ∈ P, modelsQC R c)
 
 --------------------------------------------------------------------------------
 -- Denotational Semantics
@@ -411,7 +459,7 @@ def modelsP (R : Realization) (P : Program) : Prop :=
 
 /--
 The denotation of a *program* is the set of realizations
-that satisfy all signed constraints in the program,
+that satisfy all qualified constraints in the program,
 and are well-formed.
 -/
 def denotes (P : Program) : Set Realization :=
@@ -438,9 +486,9 @@ lemma denotes_empty : ⟦∅⟧ = WF := by
 
 
 /--
-Adding a signed constraint refines the denotation (shrinks the set).
+Adding a qualified constraint refines the denotation (shrinks the set).
 -/
-theorem refinement (P : Program) (C : SignedConstraint) :
+theorem refinement (P : Program) (C : QualifiedConstraint) :
   denotes (P ∪ {C}) ⊆ ⟦P⟧ := by
   intro R h
   simp only [denotes, modelsP] at h ⊢

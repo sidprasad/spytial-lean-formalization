@@ -20,7 +20,7 @@ jobs:
 
       - name: Install elan
         run: |
-          curl https://elan-init.github.io/elan/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
           echo "$HOME/.elan/bin" >> $GITHUB_PATH
 
       - name: Get Lean toolchain version
