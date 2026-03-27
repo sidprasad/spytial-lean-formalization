@@ -44,8 +44,7 @@ def aligned_v (b₁ b₂ : Box) : Prop := b₁.x_tl = b₂.x_tl
 def leftOf    (b₁ b₂ : Box) : Prop := b₁.x_tl + b₁.width  < b₂.x_tl
 def above     (b₁ b₂ : Box) : Prop := b₁.y_tl + b₁.height < b₂.y_tl
 /--
-`spytial-core` negates ordering constraints by flipping them to a zero-gap
-variant, which corresponds to a non-strict separator.
+Negated ordering constraints use the corresponding non-strict separator.
 -/
 def leftOfEq  (b₁ b₂ : Box) : Prop := b₁.x_tl + b₁.width  ≤ b₂.x_tl
 def aboveEq   (b₁ b₂ : Box) : Prop := b₁.y_tl + b₁.height ≤ b₂.y_tl
@@ -90,6 +89,10 @@ abbrev Selector₂ := Finset (Atom × Atom)
 
 def first(p : Atom × Atom) : Atom := p.1
 def firstOf(s : Selector₂) : Selector₁ := s.image first
+/--
+For a fixed key atom `a`, `fiber X a` is the unary selector of all atoms `b`
+such that `(a, b) ∈ X`.
+-/
 def fiber (X : Selector₂) (a : Atom) : Selector₁ := (X.filter fun p => p.1 = a).image Prod.snd
 
 def lift₁ (R : Realization) (S : Selector₁) (P : Box → Prop) : Prop :=
@@ -127,9 +130,9 @@ inductive Constraint where
 deriving DecidableEq
 
 /--
-Programs in `spytial-core` can negate individual constraints (`NOT ...`).
-We model that directly as signed atomic constraints rather than duplicating
-every constructor with a negated variant.
+Programs may negate individual constraints (`NOT ...`). We model that directly
+as signed atomic constraints rather than duplicating every constructor with a
+negated variant.
 -/
 inductive SignedConstraint where
 | pos : Constraint → SignedConstraint
@@ -207,12 +210,13 @@ def sat_group₂_core (R : Realization) (X : Selector₂) : Prop :=
     ∀ a ∈ firstOf X,
       ∀ b, ((∃ bb, R b = some bb ∧ contains (fam a) bb) ↔ (a,b) ∈ X)
 
+/-- Negated unary grouping: no boundary contains exactly the selected atoms. -/
 def sat_neg_group₁_core (R : Realization) (S : Selector₁) : Prop :=
   ¬ sat_group₁_core R S
 
 /--
-`spytial-core` materializes one group per key and negates each one separately,
-so the negation stays underneath the `∀ a ∈ firstOf X` expansion.
+Negated keyed grouping is checked fiberwise: for each key `a`, the associated
+unary group `fiber X a` fails unary grouping.
 -/
 def sat_neg_group₂_core (R : Realization) (X : Selector₂) : Prop :=
   ∀ a ∈ firstOf X, sat_neg_group₁_core R (fiber X a)
@@ -314,9 +318,8 @@ noncomputable def sat_cyclic_ccw (R : Realization) (X : Selector₂) : Prop :=
     2 < L'.length → ∃ k, k < L'.length ∧ allPairs_ok R L' k
 
 /--
-Negated cyclic constraints in `spytial-core` negate each perturbation
-alternative for each fragment, rather than negating the outer conjunction over
-fragments.
+Negated cyclic constraints negate each perturbation alternative for each
+fragment, rather than negating the outer conjunction over fragments.
 -/
 noncomputable def sat_neg_cyclic_cw (R : Realization) (X : Selector₂) : Prop :=
   ∀ L ∈ maximalSimplePaths X,
@@ -349,9 +352,8 @@ def modelsC (R : Realization) : Constraint → Prop
 | .cyclic      X r => sat_cyclic      R X r
 
 /--
-Satisfaction for signed constraints. Negation follows the `spytial-core`
-implementation strategy: negate each selected local obligation, not the outer
-selector quantification.
+Satisfaction for signed constraints. Negation is pushed down to the selected
+local obligations, not applied to the outer selector quantification.
 -/
 def modelsSC (R : Realization) : SignedConstraint → Prop
 | .pos c => modelsC R c
