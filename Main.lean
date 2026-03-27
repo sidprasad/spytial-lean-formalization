@@ -45,13 +45,6 @@ def aligned_h (b₁ b₂ : Box) : Prop := b₁.y_tl = b₂.y_tl
 def aligned_v (b₁ b₂ : Box) : Prop := b₁.x_tl = b₂.x_tl
 def leftOf    (b₁ b₂ : Box) : Prop := b₁.x_tl + b₁.width  < b₂.x_tl
 def above     (b₁ b₂ : Box) : Prop := b₁.y_tl + b₁.height < b₂.y_tl
-/--
-Negated ordering constraints use the corresponding non-strict separator.
-Note: this is direction inversion (matching spytial-core's implementation),
-not pure logical negation of the strict inequality.
--/
-def leftOfEq  (b₁ b₂ : Box) : Prop := b₁.x_tl + b₁.width  ≤ b₂.x_tl
-def aboveEq   (b₁ b₂ : Box) : Prop := b₁.y_tl + b₁.height ≤ b₂.y_tl
 def contains (g : GroupBoundary) (b : Box) : Prop :=
   g.x_tl ≤ b.x_tl ∧ g.y_tl ≤ b.y_tl ∧
   b.x_tl + b.width ≤ g.x_br ∧ b.y_tl + b.height ≤ g.y_br
@@ -176,38 +169,9 @@ def sat_orientation (R : Realization) : Selector₂ → Direction → Prop
 | X, .directlyAbove   => lift₂ R X (fun b₁ b₂ => above b₂ b₁ ∧ aligned_v b₁ b₂)
 | X, .directlyBelow   => lift₂ R X (fun b₁ b₂ => above b₁ b₂ ∧ aligned_v b₁ b₂)
 
-/--
-Negated orientation uses direction inversion with non-strict separators,
-matching spytial-core's `negateAtomicConstraint` implementation.
-NOT(A left-of B) becomes B ≤ A (reversed, non-strict) rather than
-the pure logical ¬(A < B) = A ≥ B.
-
-For `directly*` variants, De Morgan distributes over the conjunction:
-NOT(leftOf ∧ aligned) = NOT(leftOf) ∨ NOT(aligned).
--/
-def sat_neg_orientation (R : Realization) : Selector₂ → Direction → Prop
-| X, .left            => lift₂ R X leftOfEq
-| X, .right           => lift₂ R X (fun b₁ b₂ => leftOfEq b₂ b₁)
-| X, .above           => lift₂ R X aboveEq
-| X, .below           => lift₂ R X (fun b₁ b₂ => aboveEq b₂ b₁)
-| X, .directlyLeft    => lift₂ R X (fun b₁ b₂ => leftOfEq b₁ b₂ ∨ above b₁ b₂ ∨ above b₂ b₁)
-| X, .directlyRight   => lift₂ R X (fun b₁ b₂ => leftOfEq b₂ b₁ ∨ above b₁ b₂ ∨ above b₂ b₁)
-| X, .directlyAbove   => lift₂ R X (fun b₁ b₂ => aboveEq b₁ b₂ ∨ leftOf b₁ b₂ ∨ leftOf b₂ b₁)
-| X, .directlyBelow   => lift₂ R X (fun b₁ b₂ => aboveEq b₂ b₁ ∨ leftOf b₁ b₂ ∨ leftOf b₂ b₁)
-
 def sat_align (R : Realization) : Selector₂ → AlignDir → Prop
 | X, .horizontal => lift₂ R X aligned_h
 | X, .vertical   => lift₂ R X aligned_v
-
-/--
-Negated alignment: the two nodes must differ on the aligned axis.
-Produces a disjunction matching spytial-core's `negateAtomicConstraint`
-for `AlignmentConstraint`.
--/
-def sat_neg_align (R : Realization) : Selector₂ → AlignDir → Prop
-| X, .horizontal => lift₂ R X (fun b₁ b₂ => above b₁ b₂ ∨ above b₂ b₁)
-| X, .vertical   => lift₂ R X (fun b₁ b₂ => leftOf b₁ b₂ ∨ leftOf b₂ b₁)
-
 
 --------------------------
 -- Groups
@@ -234,23 +198,12 @@ def sat_group₂_core (R : Realization) (X : Selector₂) : Prop :=
     ∀ a ∈ firstOf X,
       ∀ b, ((∃ bb, R b = some bb ∧ contains (fam a) bb) ↔ (a,b) ∈ X)
 
-/-- Negated unary group: no axis-aligned boundary can contain exactly the
-    selected atoms' boxes.  This is the semantic negation of `sat_group₁_core`. -/
-def sat_neg_group₁_core (R : Realization) (S : Selector₁) : Prop :=
-  ¬ sat_group₁_core R S
-
-/--
-Negated keyed grouping is checked fiberwise: for each key `a`, no boundary
-can contain exactly the atoms in `fiber X a`.  This matches spytial-core,
-where a negated `GroupByField` independently negates each key's group.
-
-Note: fiberwise negation is strictly stronger than the global negation
-`¬ sat_group₂_core R X` (which only requires that no single *family*
-works for all keys simultaneously).
--/
+/-- Negated keyed grouping is checked fiberwise: for each key `a`, no
+    boundary can contain exactly the atoms in `fiber X a`.  This is
+    strictly stronger than `¬ sat_group₂_core` (which only requires
+    that no single *family* works for all keys simultaneously). -/
 def sat_neg_group₂_core (R : Realization) (X : Selector₂) : Prop :=
-  ∀ a ∈ firstOf X, sat_neg_group₁_core R (fiber X a)
-
+  ∀ a ∈ firstOf X, ¬ sat_group₁_core R (fiber X a)
 
 ---- Cyclic -------
 
@@ -347,29 +300,12 @@ noncomputable def sat_cyclic_ccw (R : Realization) (X : Selector₂) : Prop :=
     let L' := L.reverse
     2 < L'.length → ∃ k, k < L'.length ∧ allPairs_ok R L' k
 
-/--
-Negated cyclic constraints negate each perturbation alternative for each
-fragment, rather than negating the outer conjunction over fragments.
--/
-noncomputable def sat_neg_cyclic_cw (R : Realization) (X : Selector₂) : Prop :=
-  ∀ L ∈ maximalSimplePaths X,
-    ∀ k, k < L.length → 2 < L.length → ¬ allPairs_ok R L k
-
-noncomputable def sat_neg_cyclic_ccw (R : Realization) (X : Selector₂) : Prop :=
-  ∀ L ∈ maximalSimplePaths X,
-    let L' := L.reverse
-    ∀ k, k < L'.length → 2 < L'.length → ¬ allPairs_ok R L' k
 
 /-- Unified API as in your constraint syntax. -/
 noncomputable def sat_cyclic (R : Realization) (X : Selector₂) (rot : Rotation) : Prop :=
   match rot with
   | .clockwise        => sat_cyclic_cw  R X
   | .counterclockwise => sat_cyclic_ccw R X
-
-noncomputable def sat_neg_cyclic (R : Realization) (X : Selector₂) (rot : Rotation) : Prop :=
-  match rot with
-  | .clockwise        => sat_neg_cyclic_cw  R X
-  | .counterclockwise => sat_neg_cyclic_ccw R X
 
 --------------------------------------------------------------------------------
 -- Satisfaction Predicates
@@ -385,27 +321,13 @@ def modelsC (R : Realization) : Constraint → Prop
 | .group₂      X _ => sat_group₂_core R X
 | .cyclic      X r => sat_cyclic      R X r
 
-/--
-Negated constraint satisfaction (`holds: never`).
-
-For orientation, alignment, and cyclic constraints, negation uses
-*direction inversion* (matching spytial-core's implementation), not
-pure logical ¬.  For groups, negation asserts that no rectangular
-boundary can contain exactly the specified atoms (group₁) or that
-every key's fiber independently fails grouping (group₂).
-
-Note: `size` and `hideatom` negation uses pure logical ¬ of the
-positive predicate.  These combinations are not currently expressible
-in spytial-core's YAML syntax.
--/
+/-- Negated constraint satisfaction (`holds: never`).
+    Negation is the precise logical ¬ of the positive predicate,
+    except for `group₂` which uses fiberwise negation (each key's
+    group independently fails). -/
 def modelsNegC (R : Realization) : Constraint → Prop
-| .orientation X d => sat_neg_orientation R X d
-| .align X a       => sat_neg_align R X a
-| .cyclic X r      => sat_neg_cyclic R X r
-| .group₁ S        => ¬ sat_group₁_core R S
-| .group₂ X _      => sat_neg_group₂_core R X
-| .size w h S      => ¬ sat_size R w h S
-| .hideatom S      => ¬ sat_hide R S
+| .group₂ X _ => sat_neg_group₂_core R X
+| c           => ¬ modelsC R c
 
 /--
 Satisfaction for qualified constraints.  Dispatches to `modelsC` or
@@ -551,8 +473,318 @@ theorem unsat_iff_empty (P : Program) :
   · exact unsat_empty
 
 
+--------------------------------------------------------------------------------
+-- Denotation Set Difference
+--------------------------------------------------------------------------------
+
+/-- Set difference of denotations: realizations satisfying P but not Q. -/
+def denoteDiff (P Q : Program) : Set Realization := denotes P \ denotes Q
+
+theorem denoteDiff_sub (P Q : Program) : denoteDiff P Q ⊆ denotes P :=
+  Set.diff_subset
+
+theorem denoteDiff_union (P Q : Program) :
+    denoteDiff P Q ∪ (denotes P ∩ denotes Q) = denotes P :=
+  Set.diff_union_inter (denotes P) (denotes Q)
+
+/-- The difference is empty iff ⟦P⟧ ⊆ ⟦Q⟧. -/
+theorem denoteDiff_empty_iff (P Q : Program) :
+    denoteDiff P Q = ∅ ↔ denotes P ⊆ denotes Q := by
+  simp [denoteDiff, Set.diff_eq_empty]
+
+/-- Adding constraints to P shrinks the difference. -/
+theorem denoteDiff_antitone_left {P₁ P₂ : Program} (h : P₁ ⊆ P₂) (Q : Program) :
+    denoteDiff P₂ Q ⊆ denoteDiff P₁ Q :=
+  Set.diff_subset_diff_left (monotonicity h)
+
+/-- Adding constraints to Q enlarges the difference (⟦Q⟧ shrinks,
+    so less is subtracted). -/
+theorem denoteDiff_antitone_right {Q₁ Q₂ : Program} (h : Q₁ ⊆ Q₂) (P : Program) :
+    denoteDiff P Q₁ ⊆ denoteDiff P Q₂ :=
+  Set.diff_subset_diff_right (monotonicity h)
+
+/-- Composition (program union) refines both components: its denotation is
+    contained in the intersection of the individual denotations.
+
+    The reverse inclusion does not hold in general because merging group
+    boundary witnesses from two programs may violate `groupsSubsumptionGlobal`. -/
+theorem compose_sub_inter (P Q : Program) :
+    denotes (compose P Q) ⊆ denotes P ∩ denotes Q :=
+  fun _ hR => ⟨monotonicity Finset.subset_union_left hR,
+               monotonicity Finset.subset_union_right hR⟩
+
+--------------------------------------------------------------------------------
+-- Pure Negation: Contradiction and Complement
+--------------------------------------------------------------------------------
+
+/-- A constraint has *pure negation* when `holds: never` is exactly the
+    logical negation of `holds: always`.  This holds for every constraint
+    except `group₂`, which uses fiberwise negation (strictly stronger). -/
+def has_pure_negation (c : Constraint) : Prop :=
+  ∀ R : Realization, modelsNegC R c ↔ ¬ modelsC R c
+
+lemma orientation_pure_neg (X : Selector₂) (d : Direction) :
+    has_pure_negation (.orientation X d) := fun _ => Iff.rfl
+lemma align_pure_neg (X : Selector₂) (a : AlignDir) :
+    has_pure_negation (.align X a) := fun _ => Iff.rfl
+lemma cyclic_pure_neg (X : Selector₂) (r : Rotation) :
+    has_pure_negation (.cyclic X r) := fun _ => Iff.rfl
+lemma group₁_pure_neg (S : Selector₁) : has_pure_negation (.group₁ S) := fun _ => Iff.rfl
+lemma size_pure_neg (w h : ℚ) (S : Selector₁) : has_pure_negation (.size w h S) :=
+  fun _ => Iff.rfl
+lemma hideatom_pure_neg (S : Selector₁) : has_pure_negation (.hideatom S) :=
+  fun _ => Iff.rfl
+
+/-- Exhaustiveness: every realization satisfies one mode. -/
+theorem pure_neg_exhaustive (c : Constraint) (hPure : has_pure_negation c)
+    (R : Realization) : modelsC R c ∨ modelsNegC R c := by
+  by_cases h : modelsC R c
+  · exact Or.inl h
+  · exact Or.inr ((hPure R).mpr h)
+
+/-- Exclusivity: no realization satisfies both modes. -/
+theorem pure_neg_exclusive (c : Constraint) (hPure : has_pure_negation c)
+    (R : Realization) : ¬ (modelsC R c ∧ modelsNegC R c) :=
+  fun ⟨hPos, hNeg⟩ => ((hPure R).mp hNeg) hPos
+
+/-- A program with both `holds: always` and `holds: never` for a
+    pure-negation constraint is unsatisfiable. -/
+theorem always_never_unsat (P : Program) (c : Constraint)
+    (hPure : has_pure_negation c)
+    (hA : ⟨c, .always⟩ ∈ P) (hN : ⟨c, .never⟩ ∈ P) :
+    denotes P = ∅ := by
+  apply unsat_empty
+  intro R _ ⟨_, _, _, hSat⟩
+  exact pure_neg_exclusive c hPure R ⟨hSat _ hA, hSat _ hN⟩
+
+/-- Complement intersection: ⟦{c, always}⟧ ∩ ⟦{c, never}⟧ = ∅. -/
+theorem pure_neg_complement_inter (c : Constraint) (hPure : has_pure_negation c) :
+    denotes {⟨c, .always⟩} ∩ denotes {⟨c, .never⟩} = ∅ := by
+  ext R
+  simp only [Set.mem_inter_iff, Set.mem_empty_iff_false, iff_false]
+  intro ⟨hA, hN⟩
+  simp only [denotes, modelsP, Set.mem_setOf] at hA hN
+  obtain ⟨_, _, _, _, hSatA⟩ := hA
+  obtain ⟨_, _, _, _, hSatN⟩ := hN
+  exact pure_neg_exclusive c hPure R
+    ⟨hSatA _ (Finset.mem_singleton.mpr rfl), hSatN _ (Finset.mem_singleton.mpr rfl)⟩
+
+--------------------------------------------------------------------------------
+-- Orientation Contradiction
+--------------------------------------------------------------------------------
+
+/-- With pure negation, a program requiring both `holds: always` and
+    `holds: never` for the same orientation constraint is unsatisfiable.
+    This is now a direct corollary of `always_never_unsat`. -/
+theorem orientation_always_never_unsat (P : Program) (X : Selector₂) (d : Direction)
+    (hA : ⟨.orientation X d, .always⟩ ∈ P)
+    (hN : ⟨.orientation X d, .never⟩ ∈ P) :
+    denotes P = ∅ :=
+  always_never_unsat P (.orientation X d) (orientation_pure_neg X d) hA hN
+
+--------------------------------------------------------------------------------
+-- Group Subsumption Consequences
+--------------------------------------------------------------------------------
+
+/-- If two positive group₁ constraints have overlapping selectors (share
+    at least one atom), then in any valid realization one selector is
+    contained in the other.  This follows from the group subsumption
+    discipline: boundaries that overlap on any box must be globally nested. -/
+theorem group_overlap_nesting (P : Program) (S₁ S₂ : Selector₁)
+    (hA₁ : ⟨.group₁ S₁, .always⟩ ∈ P)
+    (hA₂ : ⟨.group₁ S₂, .always⟩ ∈ P)
+    (hOv : (S₁ ∩ S₂).Nonempty)
+    (R : Realization) (hR : R ∈ denotes P) :
+    S₁ ⊆ S₂ ∨ S₂ ⊆ S₁ := by
+  obtain ⟨_, Gs, hGW, hGSub, _⟩ := hR
+  obtain ⟨g₁, hg₁_mem, hg₁⟩ := hGW.1 S₁ hA₁
+  obtain ⟨g₂, hg₂_mem, hg₂⟩ := hGW.1 S₂ hA₂
+  obtain ⟨c, hc⟩ := hOv
+  rw [Finset.mem_inter] at hc
+  -- The shared atom c has a box in both group boundaries
+  obtain ⟨bc₁, hRc₁, hcont₁⟩ := (hg₁ c).mpr hc.1
+  obtain ⟨bc₂, hRc₂, hcont₂⟩ := (hg₂ c).mpr hc.2
+  have hbc : bc₁ = bc₂ := by simpa using hRc₁.symm.trans hRc₂
+  subst hbc
+  by_cases hg : g₁ = g₂
+  · -- Same boundary ⟹ same selector ⟹ S₁ ⊆ S₂
+    left; intro a ha
+    obtain ⟨ba, hRa, hconta⟩ := (hg₁ a).mpr ha
+    exact (hg₂ a).mp ⟨ba, hRa, hg ▸ hconta⟩
+  · -- Different boundaries sharing a box ⟹ subsumption gives nesting
+    rcases hGSub g₁ g₂ hg hg₁_mem hg₂_mem ⟨c, bc₁, hRc₁, hcont₁, hcont₂⟩ with h | h
+    · left; intro a ha
+      obtain ⟨ba, hRa, hconta⟩ := (hg₁ a).mpr ha
+      exact (hg₂ a).mp ⟨ba, hRa, h a ba hRa hconta⟩
+    · right; intro a ha
+      obtain ⟨ba, hRa, hconta⟩ := (hg₂ a).mpr ha
+      exact (hg₁ a).mp ⟨ba, hRa, h a ba hRa hconta⟩
+
+--------------------------------------------------------------------------------
+-- Set Difference Decomposition
+--------------------------------------------------------------------------------
+
+/-- Finset-level program difference: ⟦P \ Q⟧ ⊇ ⟦P⟧.
+    Removing constraints from P weakens the program. -/
+theorem denotes_sdiff_supset (P Q : Program) : denotes P ⊆ denotes (P \ Q) :=
+  monotonicity Finset.sdiff_subset
+
+/-- The denotation set-difference is contained in the program-difference
+    denotation: ⟦P⟧ \ ⟦Q⟧ ⊆ ⟦P \ Q⟧. -/
+theorem denoteDiff_sub_sdiff (P Q : Program) : denoteDiff P Q ⊆ denotes (P \ Q) :=
+  Set.diff_subset.trans (denotes_sdiff_supset P Q)
+
+/-- Flip the holds mode of a qualified constraint.
+    `always ↔ never` — used to express "violates q" as "satisfies flipMode q". -/
+def flipMode : QualifiedConstraint → QualifiedConstraint
+| ⟨c, .always⟩ => ⟨c, .never⟩
+| ⟨c, .never⟩  => ⟨c, .always⟩
+
+lemma flipMode_constraint (q : QualifiedConstraint) :
+    (flipMode q).constraint = q.constraint := by
+  rcases q with ⟨c, (_ | _)⟩ <;> rfl
+
+/-- Flipping mode negates satisfaction for pure-negation constraints. -/
+lemma flipMode_neg (q : QualifiedConstraint)
+    (hPure : has_pure_negation q.constraint) (R : Realization) :
+    modelsQC R (flipMode q) ↔ ¬ modelsQC R q := by
+  rcases q with ⟨c, (_ | _)⟩
+  · exact hPure R
+  · exact ((not_congr (hPure R)).trans not_not).symm
+
+/-- A constraint is a group constraint (group₁ or group₂). -/
+def Constraint.isGroup : Constraint → Prop
+| .group₁ _ => True
+| .group₂ _ _ => True
+| _ => False
+
+/-- A program is group-free if it contains no group constraints. -/
+def groupFree (Q : Program) : Prop := ∀ q ∈ Q, ¬ Constraint.isGroup q.constraint
+
+/-- All constraints in a group-free program have pure negation. -/
+lemma groupFree_pure_neg {Q : Program} (hGF : groupFree Q)
+    {q : QualifiedConstraint} (hq : q ∈ Q) :
+    has_pure_negation q.constraint := by
+  have := hGF q hq
+  rcases q with ⟨c, _⟩
+  cases c <;> simp [Constraint.isGroup] at this <;> exact fun _ => Iff.rfl
+
+/-- For group-free programs, satisfaction reduces to per-constraint satisfaction
+    (the group witness existential is trivially satisfied by `Gs = ∅`). -/
+lemma groupFree_modelsP (R : Realization) (Q : Program) (hGF : groupFree Q) :
+    modelsP R Q ↔ ∀ q ∈ Q, modelsQC R q := by
+  constructor
+  · exact fun ⟨_, _, _, hSat⟩ => hSat
+  · intro hSat
+    exact ⟨∅,
+      ⟨fun S hS => absurd (show Constraint.isGroup (.group₁ S) from trivial) (hGF _ hS),
+       fun X addE hX => absurd (show Constraint.isGroup (.group₂ X addE) from trivial) (hGF _ hX)⟩,
+      fun _ _ _ hg₁ => absurd hg₁ (Finset.notMem_empty _),
+      hSat⟩
+
+/-- Group witnesses extend from P to P ∪ {q} when q is not a group constraint. -/
+lemma groupWitnesses_insert {R : Realization} {P : Program} {Gs : Finset GroupBoundary}
+    (q : QualifiedConstraint) (hGW : groupWitnesses R P Gs)
+    (hng : ¬ Constraint.isGroup q.constraint) :
+    groupWitnesses R (P ∪ {q}) Gs := by
+  constructor
+  · intro S hS
+    rcases Finset.mem_union.mp hS with h | h
+    · exact hGW.1 S h
+    · exact absurd (Finset.mem_singleton.mp h ▸ show Constraint.isGroup (.group₁ S) from trivial) hng
+  · intro X addE hX
+    rcases Finset.mem_union.mp hX with h | h
+    · exact hGW.2 X addE h
+    · exact absurd (Finset.mem_singleton.mp h ▸ show Constraint.isGroup (.group₂ X addE) from trivial) hng
+
+/-- **Set difference decomposition.** For group-free Q:
+
+    ⟦P⟧ \ ⟦Q⟧ = ⋃ q ∈ Q, ⟦P ∪ {flipMode q}⟧
+
+    Each summand adds the negation of one specific constraint from Q.
+    This shows that the denotation algebra is closed under set difference
+    up to finite union (which programs cannot express internally, since
+    programs are conjunctive). -/
+theorem denoteDiff_decompose (P Q : Program) (hGF : groupFree Q) :
+    denoteDiff P Q = ⋃ q ∈ Q, denotes (P ∪ {flipMode q}) := by
+  ext R
+  simp only [denoteDiff, Set.mem_diff, Set.mem_iUnion₂]
+  constructor
+  · -- Forward: R ∈ ⟦P⟧ ∧ R ∉ ⟦Q⟧ → ∃ q ∈ Q, R ∈ ⟦P ∪ {flipMode q}⟧
+    intro ⟨hRP, hRQ⟩
+    have hWF : R ∈ WF := hRP.1
+    have hNMQ : ¬ modelsP R Q := fun h => hRQ ⟨hWF, h⟩
+    rw [groupFree_modelsP R Q hGF] at hNMQ; push_neg at hNMQ
+    obtain ⟨q, hqQ, hNeg⟩ := hNMQ
+    obtain ⟨Gs, hGW, hGSub, hSat⟩ := hRP.2
+    refine ⟨q, hqQ, hWF, Gs,
+      groupWitnesses_insert _ hGW (flipMode_constraint q ▸ hGF q hqQ), hGSub, ?_⟩
+    intro c hc
+    rcases Finset.mem_union.mp hc with hP | hF
+    · exact hSat c hP
+    · rw [Finset.mem_singleton.mp hF]
+      exact (flipMode_neg q (groupFree_pure_neg hGF hqQ) R).mpr hNeg
+  · -- Reverse: ∃ q ∈ Q, R ∈ ⟦P ∪ {flipMode q}⟧ → R ∈ ⟦P⟧ ∧ R ∉ ⟦Q⟧
+    intro ⟨q, hqQ, hWF, Gs, hGW, hGSub, hSat⟩
+    refine ⟨⟨hWF, Gs, ⟨fun S hS => hGW.1 S (Finset.mem_union_left _ hS),
+      fun X addE hX => hGW.2 X addE (Finset.mem_union_left _ hX)⟩,
+      hGSub, fun c hc => hSat c (Finset.mem_union_left _ hc)⟩, ?_⟩
+    intro ⟨_, hMQ⟩
+    rw [groupFree_modelsP R Q hGF] at hMQ
+    have hFlip := hSat (flipMode q) (Finset.mem_union_right _ (Finset.mem_singleton.mpr rfl))
+    rw [flipMode_neg q (groupFree_pure_neg hGF hqQ) R] at hFlip
+    exact hFlip (hMQ q hqQ)
+
+/-- **Under-approximation of set difference.** For any q ∈ Q with pure
+    negation, ⟦P ∪ {flipMode q}⟧ ⊆ ⟦P⟧ \ ⟦Q⟧.
+
+    Unlike `denoteDiff_decompose`, this requires NO `groupFree` condition.
+    If R satisfies flip(q), it violates q, so `modelsP R Q` fails regardless
+    of whether Q's group subsumption holds.
+
+    **Significance for the solver.** Spytial programs generally contain group
+    constraints, so `denoteDiff_decompose` (which assumes `groupFree Q`) does
+    not directly apply. This theorem fills that gap: given *any* programs P
+    and Q and a non-group constraint q ∈ Q, the program `P ∪ {flipMode q}`
+    is a *sound* (but incomplete) witness for the set difference ⟦P⟧ \ ⟦Q⟧.
+
+    Concretely, to under-approximate ⟦P⟧ \ ⟦Q⟧ the solver can enumerate the
+    non-group constraints q ∈ Q, flip each one, and solve `P ∪ {flipMode q}`.
+    Every solution found this way is guaranteed to satisfy P but violate Q.
+    Completeness is lost only for realizations that satisfy every non-group
+    constraint in Q yet violate Q solely through group subsumption failure — a
+    scenario that cannot arise when Q is group-free (hence the exact equality
+    in `denoteDiff_decompose`). -/
+theorem denoteDiff_approx (P Q : Program) (q : QualifiedConstraint)
+    (hq : q ∈ Q) (hPure : has_pure_negation q.constraint) :
+    denotes (P ∪ {flipMode q}) ⊆ denoteDiff P Q := by
+  intro R hR
+  refine ⟨monotonicity Finset.subset_union_left hR, ?_⟩
+  intro ⟨_, _, _, _, hSatQ⟩
+  obtain ⟨_, _, _, _, hSatPF⟩ := hR
+  have hFlip := hSatPF (flipMode q) (Finset.mem_union_right _ (Finset.mem_singleton.mpr rfl))
+  exact ((flipMode_neg q hPure R).mp hFlip) (hSatQ q hq)
+
+/-- **Existence of a program under-approximating set difference.**
+    For any programs P and Q, as long as Q contains at least one constraint
+    with pure negation, there exists a program M whose denotation is contained
+    in ⟦P⟧ \ ⟦Q⟧. Direct corollary of `denoteDiff_approx`. -/
+theorem denoteDiff_witness (P Q : Program)
+    (q : QualifiedConstraint) (hq : q ∈ Q)
+    (hPure : has_pure_negation q.constraint) :
+    ∃ M : Program, denotes M ⊆ denoteDiff P Q :=
+  ⟨P ∪ {flipMode q}, denoteDiff_approx P Q q hq hPure⟩
+
 #check refinement
 #check monotonicity
 #check unsat_iff_empty
+#check denoteDiff
+#check denoteDiff_empty_iff
+#check denoteDiff_decompose
+#check compose_sub_inter
+#check always_never_unsat
+#check pure_neg_complement_inter
+#check orientation_always_never_unsat
+#check group_overlap_nesting
 
 end Spytial
