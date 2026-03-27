@@ -198,10 +198,10 @@ def sat_group₂_core (R : Realization) (X : Selector₂) : Prop :=
     ∀ a ∈ firstOf X,
       ∀ b, ((∃ bb, R b = some bb ∧ contains (fam a) bb) ↔ (a,b) ∈ X)
 
-/-- Negated keyed grouping is checked fiberwise: for each key `a`, no
-    boundary can contain exactly the atoms in `fiber X a`.  This is
-    strictly stronger than `¬ sat_group₂_core` (which only requires
-    that no single *family* works for all keys simultaneously). -/
+/-- Fiberwise negation of keyed grouping: for each key `a`, no boundary
+    can contain exactly the atoms in `fiber X a`.  This is strictly
+    stronger than `¬ sat_group₂_core` (the actual definition of negation
+    used by `modelsNegC`).  Retained as a standalone property. -/
 def sat_neg_group₂_core (R : Realization) (X : Selector₂) : Prop :=
   ∀ a ∈ firstOf X, ¬ sat_group₁_core R (fiber X a)
 
@@ -322,12 +322,9 @@ def modelsC (R : Realization) : Constraint → Prop
 | .cyclic      X r => sat_cyclic      R X r
 
 /-- Negated constraint satisfaction (`holds: never`).
-    Negation is the precise logical ¬ of the positive predicate,
-    except for `group₂` which uses fiberwise negation (each key's
-    group independently fails). -/
+    Negation is the precise logical ¬ of the positive predicate. -/
 def modelsNegC (R : Realization) : Constraint → Prop
-| .group₂ X _ => sat_neg_group₂_core R X
-| c           => ¬ modelsC R c
+| c => ¬ modelsC R c
 
 /--
 Satisfaction for qualified constraints.  Dispatches to `modelsC` or
@@ -518,8 +515,8 @@ theorem compose_sub_inter (P Q : Program) :
 --------------------------------------------------------------------------------
 
 /-- A constraint has *pure negation* when `holds: never` is exactly the
-    logical negation of `holds: always`.  This holds for every constraint
-    except `group₂`, which uses fiberwise negation (strictly stronger). -/
+    logical negation of `holds: always`.  This now holds for every
+    constraint (including `group₂`). -/
 def has_pure_negation (c : Constraint) : Prop :=
   ∀ R : Realization, modelsNegC R c ↔ ¬ modelsC R c
 
@@ -533,6 +530,8 @@ lemma group₁_pure_neg (S : Selector₁) : has_pure_negation (.group₁ S) := f
 lemma size_pure_neg (w h : ℚ) (S : Selector₁) : has_pure_negation (.size w h S) :=
   fun _ => Iff.rfl
 lemma hideatom_pure_neg (S : Selector₁) : has_pure_negation (.hideatom S) :=
+  fun _ => Iff.rfl
+lemma group₂_pure_neg (X : Selector₂) (addE : Bool) : has_pure_negation (.group₂ X addE) :=
   fun _ => Iff.rfl
 
 /-- Exhaustiveness: every realization satisfies one mode. -/
