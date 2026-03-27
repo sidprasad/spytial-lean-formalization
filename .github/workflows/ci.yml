@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs for the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & Verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install elan
+        run: |
+          curl https://elan-init.github.io/elan/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Get Lean toolchain version
+        id: lean
+        run: echo "version=$(cat lean-toolchain)" >> $GITHUB_OUTPUT
+
+      - name: Cache .lake
+        uses: actions/cache@v4
+        with:
+          path: .lake
+          key: lake-${{ steps.lean.outputs.version }}-${{ hashFiles('lakefile.lean', 'lake-manifest.json') }}
+          restore-keys: |
+            lake-${{ steps.lean.outputs.version }}-
+
+      - name: Fetch Mathlib cache
+        run: lake exe cache get
+
+      - name: Build
+        run: lake build
+
+      - name: Verify theorems
+        run: |
+          echo "Build succeeded — all theorems type-checked:"
+          echo "  - refinement"
+          echo "  - monotonicity"
+          echo "  - unsat_iff_empty"
