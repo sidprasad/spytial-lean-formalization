@@ -1,6 +1,6 @@
 /-
 # Spytial: Spatial Semantics
-* A program is a finite set of spytial constraints.
+* A program is a finite set of signed spytial constraints.
 * Its denotation is the set of realizations (layouts)
 * that satisfy those constraints.
 -/
@@ -43,6 +43,12 @@ def aligned_h (b₁ b₂ : Box) : Prop := b₁.y_tl = b₂.y_tl
 def aligned_v (b₁ b₂ : Box) : Prop := b₁.x_tl = b₂.x_tl
 def leftOf    (b₁ b₂ : Box) : Prop := b₁.x_tl + b₁.width  < b₂.x_tl
 def above     (b₁ b₂ : Box) : Prop := b₁.y_tl + b₁.height < b₂.y_tl
+/--
+`spytial-core` negates ordering constraints by flipping them to a zero-gap
+variant, which corresponds to a non-strict separator.
+-/
+def leftOfEq  (b₁ b₂ : Box) : Prop := b₁.x_tl + b₁.width  ≤ b₂.x_tl
+def aboveEq   (b₁ b₂ : Box) : Prop := b₁.y_tl + b₁.height ≤ b₂.y_tl
 def contains (g : GroupBoundary) (b : Box) : Prop :=
   g.x_tl ≤ b.x_tl ∧ g.y_tl ≤ b.y_tl ∧
   b.x_tl + b.width ≤ g.x_br ∧ b.y_tl + b.height ≤ g.y_br
@@ -84,6 +90,7 @@ abbrev Selector₂ := Finset (Atom × Atom)
 
 def first(p : Atom × Atom) : Atom := p.1
 def firstOf(s : Selector₂) : Selector₁ := s.image first
+def fiber (X : Selector₂) (a : Atom) : Selector₁ := (X.filter fun p => p.1 = a).image Prod.snd
 
 def lift₁ (R : Realization) (S : Selector₁) (P : Box → Prop) : Prop :=
   ∀ {a}, a ∈ S → ∃ b, R a = some b ∧ P b
@@ -119,6 +126,16 @@ inductive Constraint where
 | hideatom    : Selector₁ → Constraint
 deriving DecidableEq
 
+/--
+Programs in `spytial-core` can negate individual constraints (`NOT ...`).
+We model that directly as signed atomic constraints rather than duplicating
+every constructor with a negated variant.
+-/
+inductive SignedConstraint where
+| pos : Constraint → SignedConstraint
+| neg : Constraint → SignedConstraint
+deriving DecidableEq
+
 --------------------------------------------------------------------------------
 -- Constraint Satisfaction Rules
 --------------------------------------------------------------------------------
@@ -131,19 +148,38 @@ def sat_hide (R : Realization) (S : Selector₁) : Prop :=
   ∀ a ∈ S, R a = none
 
 def sat_orientation (R : Realization) : Selector₂ → Direction → Prop
-| X, .left            => lift₂ R X leftOf
-| X, .right           => lift₂ R X (fun b₁ b₂ => leftOf b₂ b₁)
-| X, .above           => lift₂ R X above
-| X, .below           => lift₂ R X (fun b₁ b₂ => above b₂ b₁)
-| X, .directlyLeft    => lift₂ R X (fun b₁ b₂ => leftOf b₁ b₂ ∧ aligned_h b₁ b₂)
-| X, .directlyRight   => lift₂ R X (fun b₁ b₂ => leftOf b₂ b₁ ∧ aligned_h b₁ b₂)
-| X, .directlyAbove   => lift₂ R X (fun b₁ b₂ => above  b₁ b₂ ∧ aligned_v b₁ b₂)
-| X, .directlyBelow   => lift₂ R X (fun b₁ b₂ => above  b₂ b₁ ∧ aligned_v b₁ b₂)
+| X, .left            => lift₂ R X (fun b₁ b₂ => leftOf b₂ b₁)
+| X, .right           => lift₂ R X leftOf
+| X, .above           => lift₂ R X (fun b₁ b₂ => above b₂ b₁)
+| X, .below           => lift₂ R X above
+| X, .directlyLeft    => lift₂ R X (fun b₁ b₂ => leftOf b₂ b₁ ∧ aligned_h b₁ b₂)
+| X, .directlyRight   => lift₂ R X (fun b₁ b₂ => leftOf b₁ b₂ ∧ aligned_h b₁ b₂)
+| X, .directlyAbove   => lift₂ R X (fun b₁ b₂ => above b₂ b₁ ∧ aligned_v b₁ b₂)
+| X, .directlyBelow   => lift₂ R X (fun b₁ b₂ => above b₁ b₂ ∧ aligned_v b₁ b₂)
 
+def sat_neg_size (R : Realization) (w h : ℚ) (S : Selector₁) : Prop :=
+  lift₁ R S (fun b => b.width ≠ w ∨ b.height ≠ h)
+
+def sat_neg_hide (R : Realization) (S : Selector₁) : Prop :=
+  ∀ a ∈ S, ∃ b, R a = some b
+
+def sat_neg_orientation (R : Realization) : Selector₂ → Direction → Prop
+| X, .left            => lift₂ R X leftOfEq
+| X, .right           => lift₂ R X (fun b₁ b₂ => leftOfEq b₂ b₁)
+| X, .above           => lift₂ R X aboveEq
+| X, .below           => lift₂ R X (fun b₁ b₂ => aboveEq b₂ b₁)
+| X, .directlyLeft    => lift₂ R X (fun b₁ b₂ => leftOfEq b₁ b₂ ∨ above b₁ b₂ ∨ above b₂ b₁)
+| X, .directlyRight   => lift₂ R X (fun b₁ b₂ => leftOfEq b₂ b₁ ∨ above b₁ b₂ ∨ above b₂ b₁)
+| X, .directlyAbove   => lift₂ R X (fun b₁ b₂ => aboveEq b₁ b₂ ∨ leftOf b₁ b₂ ∨ leftOf b₂ b₁)
+| X, .directlyBelow   => lift₂ R X (fun b₁ b₂ => aboveEq b₂ b₁ ∨ leftOf b₁ b₂ ∨ leftOf b₂ b₁)
 
 def sat_align (R : Realization) : Selector₂ → AlignDir → Prop
 | X, .horizontal => lift₂ R X aligned_h
 | X, .vertical   => lift₂ R X aligned_v
+
+def sat_neg_align (R : Realization) : Selector₂ → AlignDir → Prop
+| X, .horizontal => lift₂ R X (fun b₁ b₂ => above b₁ b₂ ∨ above b₂ b₁)
+| X, .vertical   => lift₂ R X (fun b₁ b₂ => leftOf b₁ b₂ ∨ leftOf b₂ b₁)
 
 
 --------------------------
@@ -170,6 +206,16 @@ def sat_group₂_core (R : Realization) (X : Selector₂) : Prop :=
   ∃ fam : Atom → GroupBoundary,
     ∀ a ∈ firstOf X,
       ∀ b, ((∃ bb, R b = some bb ∧ contains (fam a) bb) ↔ (a,b) ∈ X)
+
+def sat_neg_group₁_core (R : Realization) (S : Selector₁) : Prop :=
+  ¬ sat_group₁_core R S
+
+/--
+`spytial-core` materializes one group per key and negates each one separately,
+so the negation stays underneath the `∀ a ∈ firstOf X` expansion.
+-/
+def sat_neg_group₂_core (R : Realization) (X : Selector₂) : Prop :=
+  ∀ a ∈ firstOf X, sat_neg_group₁_core R (fiber X a)
 
 
 ---- Cyclic -------
@@ -259,19 +305,38 @@ def allPairs_ok (R : Realization) (L : List Atom) (k : Nat) : Prop :=
 /-- Clockwise cyclic satisfaction over maximal lists. -/
 noncomputable def sat_cyclic_cw (R : Realization) (X : Selector₂) : Prop :=
   ∀ L ∈ maximalSimplePaths X,
-    ∃ k, k < L.length ∧ allPairs_ok R L k
+    2 < L.length → ∃ k, k < L.length ∧ allPairs_ok R L k
 
 /-- Counterclockwise: reuse clockwise on reversed lists. -/
 noncomputable def sat_cyclic_ccw (R : Realization) (X : Selector₂) : Prop :=
   ∀ L ∈ maximalSimplePaths X,
     let L' := L.reverse
-    ∃ k, k < L'.length ∧ allPairs_ok R L' k
+    2 < L'.length → ∃ k, k < L'.length ∧ allPairs_ok R L' k
+
+/--
+Negated cyclic constraints in `spytial-core` negate each perturbation
+alternative for each fragment, rather than negating the outer conjunction over
+fragments.
+-/
+noncomputable def sat_neg_cyclic_cw (R : Realization) (X : Selector₂) : Prop :=
+  ∀ L ∈ maximalSimplePaths X,
+    ∀ k, k < L.length → 2 < L.length → ¬ allPairs_ok R L k
+
+noncomputable def sat_neg_cyclic_ccw (R : Realization) (X : Selector₂) : Prop :=
+  ∀ L ∈ maximalSimplePaths X,
+    let L' := L.reverse
+    ∀ k, k < L'.length → 2 < L'.length → ¬ allPairs_ok R L' k
 
 /-- Unified API as in your constraint syntax. -/
 noncomputable def sat_cyclic (R : Realization) (X : Selector₂) (rot : Rotation) : Prop :=
   match rot with
   | .clockwise        => sat_cyclic_cw  R X
   | .counterclockwise => sat_cyclic_ccw R X
+
+noncomputable def sat_neg_cyclic (R : Realization) (X : Selector₂) (rot : Rotation) : Prop :=
+  match rot with
+  | .clockwise        => sat_neg_cyclic_cw  R X
+  | .counterclockwise => sat_neg_cyclic_ccw R X
 
 /-- Per-constraint satisfaction predicate. -/
 def modelsC (R : Realization) : Constraint → Prop
@@ -283,6 +348,25 @@ def modelsC (R : Realization) : Constraint → Prop
 | .group₂      X _ => sat_group₂_core R X
 | .cyclic      X r => sat_cyclic      R X r
 
+/--
+Satisfaction for signed constraints. Negation follows the `spytial-core`
+implementation strategy: negate each selected local obligation, not the outer
+selector quantification.
+-/
+def modelsSC (R : Realization) : SignedConstraint → Prop
+| .pos c => modelsC R c
+| .neg (.orientation X d) => sat_neg_orientation R X d
+| .neg (.align X a)       => sat_neg_align R X a
+| .neg (.cyclic X r)      => sat_neg_cyclic R X r
+| .neg (.group₁ S)        => sat_neg_group₁_core R S
+| .neg (.group₂ X _)      => sat_neg_group₂_core R X
+| .neg (.size w h S)      => sat_neg_size R w h S
+| .neg (.hideatom S)      => sat_neg_hide R S
+
+@[simp] lemma modelsSC_pos (R : Realization) (c : Constraint) :
+  modelsSC R (.pos c) ↔ modelsC R c := by
+  rfl
+
 
 
 
@@ -290,23 +374,23 @@ def modelsC (R : Realization) : Constraint → Prop
 --------- Semantics ---------
 
 /--
- From a spatial perspective, the semantics of a program (set of constraints)
- is the set of well-formed realizations that satisfy all its constraints.
+ From a spatial perspective, the semantics of a program (set of signed
+ constraints) is the set of well-formed realizations that satisfy all of them.
 
  Program composition is set union.
- and a realization satisfies a program if it satisfies all its constraints.
+ and a realization satisfies a program if it satisfies each signed constraint.
 -/
 
-abbrev Program := Finset Constraint
+abbrev Program := Finset SignedConstraint
 
 def compose (P Q : Program) : Program := P ∪ Q
 
 
 /-- For a program `P`, `Gs` lists all group boundaries actually used by its group constraints. -/
 def groupWitnesses (R : Realization) (P : Program) (Gs : Finset GroupBoundary) : Prop :=
-  (∀ S,      Constraint.group₁ S    ∈ P →
+  (∀ S,      SignedConstraint.pos (Constraint.group₁ S) ∈ P →
      ∃ g ∈ Gs, ∀ a, ((∃ b, R a = some b ∧ contains g b) ↔ a ∈ S)) ∧
-  (∀ X addE, Constraint.group₂ X addE ∈ P →
+  (∀ X addE, SignedConstraint.pos (Constraint.group₂ X addE) ∈ P →
      ∃ fam : Atom → GroupBoundary,
        (∀ a ∈ firstOf X, fam a ∈ Gs) ∧
        (∀ a ∈ firstOf X, ∀ b, ((∃ bb, R b = some bb ∧ contains (fam a) bb) ↔ (a,b) ∈ X)))
@@ -316,7 +400,7 @@ def modelsP (R : Realization) (P : Program) : Prop :=
   ∃ Gs : Finset GroupBoundary,
     groupWitnesses R P Gs ∧
     groupsSubsumptionGlobal R Gs ∧
-    (∀ c ∈ P, modelsC R c)
+    (∀ c ∈ P, modelsSC R c)
 
 --------------------------------------------------------------------------------
 -- Denotational Semantics
@@ -325,10 +409,10 @@ def modelsP (R : Realization) (P : Program) : Prop :=
 
 /--
 The denotation of a *program* is the set of realizations
-that satisfy all constraints in the program,
+that satisfy all signed constraints in the program,
 and are well-formed.
 -/
-def denotes (P : Finset Constraint) : Set Realization :=
+def denotes (P : Program) : Set Realization :=
   { R | R ∈ WF ∧ modelsP R P }
 
 notation "⟦" P "⟧" => denotes P
@@ -352,9 +436,9 @@ lemma denotes_empty : ⟦∅⟧ = WF := by
 
 
 /--
-Adding a constraint refines the denotation (shrinks the set).
+Adding a signed constraint refines the denotation (shrinks the set).
 -/
-theorem refinement (P : Program) (C : Constraint) :
+theorem refinement (P : Program) (C : SignedConstraint) :
   denotes (P ∪ {C}) ⊆ ⟦P⟧ := by
   intro R h
   simp only [denotes, modelsP] at h ⊢
