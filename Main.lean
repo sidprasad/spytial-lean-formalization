@@ -765,6 +765,16 @@ theorem denoteDiff_approx (P Q : Program) (q : QualifiedConstraint)
   have hFlip := hSatPF (flipMode q) (Finset.mem_union_right _ (Finset.mem_singleton.mpr rfl))
   exact ((flipMode_neg q hPure R).mp hFlip) (hSatQ q hq)
 
+/-- **Existence of a program under-approximating set difference.**
+    For any programs P and Q, as long as Q contains at least one constraint
+    with pure negation, there exists a program M whose denotation is contained
+    in ⟦P⟧ \ ⟦Q⟧. Direct corollary of `denoteDiff_approx`. -/
+theorem denoteDiff_witness (P Q : Program)
+    (q : QualifiedConstraint) (hq : q ∈ Q)
+    (hPure : has_pure_negation q.constraint) :
+    ∃ M : Program, denotes M ⊆ denoteDiff P Q :=
+  ⟨P ∪ {flipMode q}, denoteDiff_approx P Q q hq hPure⟩
+
 #check refinement
 #check monotonicity
 #check unsat_iff_empty
