@@ -52,6 +52,15 @@ not pure logical negation of the strict inequality.
 -/
 def leftOfEq  (b₁ b₂ : Box) : Prop := b₁.x_tl + b₁.width  ≤ b₂.x_tl
 def aboveEq   (b₁ b₂ : Box) : Prop := b₁.y_tl + b₁.height ≤ b₂.y_tl
+
+/--
+Position-based ordering on top-left corners.  These match the Kiwi solver's
+`LeftConstraint(A, B, 0)` and `TopConstraint(A, B, 0)` which compare
+x / y variables directly (without adding node width / height).
+Used in negated-group witness encoding.
+-/
+def posLeX (b₁ b₂ : Box) : Prop := b₁.x_tl ≤ b₂.x_tl
+def posLeY (b₁ b₂ : Box) : Prop := b₁.y_tl ≤ b₂.y_tl
 def contains (g : GroupBoundary) (b : Box) : Prop :=
   g.x_tl ≤ b.x_tl ∧ g.y_tl ≤ b.y_tl ∧
   b.x_tl + b.width ≤ g.x_br ∧ b.y_tl + b.height ≤ g.y_br
@@ -235,16 +244,38 @@ def sat_group₂_core (R : Realization) (X : Selector₂) : Prop :=
       ∀ b, ((∃ bb, R b = some bb ∧ contains (fam a) bb) ↔ (a,b) ∈ X)
 
 /--
-Negated keyed grouping is checked fiberwise: for each key `a`, no boundary
-can contain exactly the atoms in `fiber X a`. This matches spytial-core,
-where a negated `GroupByField` independently negates each key's group.
+Negated unary group (witness-based).  Matches spytial-core's constraint
+validator encoding:
 
-Note: fiberwise negation is strictly stronger than the global negation
-`¬ sat_group₂_core R X` (which only requires that no single *family*
-works for all keys simultaneously).
+    NOT GROUP(S) = "any rectangle containing all members also contains
+                    a non-member"
+
+Encoding:  ∃ N ∉ S with box bN,
+           ∃ mL mR ∈ S (distinct) with boxes bL bR,
+           ∃ mT mB ∈ S (distinct) with boxes bT bB,
+             bL.x ≤ bN.x ≤ bR.x  ∧  bT.y ≤ bN.y ≤ bB.y
+
+The position comparisons use top-left corners (`posLeX`, `posLeY`),
+matching the Kiwi solver's `LeftConstraint(_, _, 0)` / `TopConstraint(_, _, 0)`.
+-/
+def sat_neg_group₁_core (R : Realization) (S : Selector₁) : Prop :=
+  ∃ n : Atom, n ∉ S ∧ ∃ bn, R n = some bn ∧
+  ∃ mL, mL ∈ S ∧ ∃ mR, mR ∈ S ∧ mL ≠ mR ∧
+  ∃ mT, mT ∈ S ∧ ∃ mB, mB ∈ S ∧ mT ≠ mB ∧
+  ∃ bL bR bT bB,
+    R mL = some bL ∧ R mR = some bR ∧
+    R mT = some bT ∧ R mB = some bB ∧
+    posLeX bL bn ∧ posLeX bn bR ∧
+    posLeY bT bn ∧ posLeY bn bB
+
+/--
+Negated keyed grouping is checked fiberwise: for each key `a`, the
+witness-based negation of `fiber X a` must hold.  This matches
+spytial-core, where a negated `GroupByField` independently negates
+each key's group.
 -/
 def sat_neg_group₂_core (R : Realization) (X : Selector₂) : Prop :=
-  ∀ a ∈ firstOf X, ¬ sat_group₁_core R (fiber X a)
+  ∀ a ∈ firstOf X, sat_neg_group₁_core R (fiber X a)
 
 
 ---- Cyclic -------
@@ -397,7 +428,7 @@ def modelsNegC (R : Realization) : Constraint → Prop
 | .orientation X d => sat_neg_orientation R X d
 | .align X a       => sat_neg_align R X a
 | .cyclic X r      => sat_neg_cyclic R X r
-| .group₁ S        => ¬ sat_group₁_core R S
+| .group₁ S        => sat_neg_group₁_core R S
 | .group₂ X _      => sat_neg_group₂_core R X
 | .size w h S      => ¬ sat_size R w h S
 | .hideatom S      => ¬ sat_hide R S
