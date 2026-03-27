@@ -740,7 +740,21 @@ theorem denoteDiff_decompose (P Q : Program) (hGF : groupFree Q) :
 
     Unlike `denoteDiff_decompose`, this requires NO `groupFree` condition.
     If R satisfies flip(q), it violates q, so `modelsP R Q` fails regardless
-    of whether Q's group subsumption holds. -/
+    of whether Q's group subsumption holds.
+
+    **Significance for the solver.** Spytial programs generally contain group
+    constraints, so `denoteDiff_decompose` (which assumes `groupFree Q`) does
+    not directly apply. This theorem fills that gap: given *any* programs P
+    and Q and a non-group constraint q ∈ Q, the program `P ∪ {flipMode q}`
+    is a *sound* (but incomplete) witness for the set difference ⟦P⟧ \ ⟦Q⟧.
+
+    Concretely, to under-approximate ⟦P⟧ \ ⟦Q⟧ the solver can enumerate the
+    non-group constraints q ∈ Q, flip each one, and solve `P ∪ {flipMode q}`.
+    Every solution found this way is guaranteed to satisfy P but violate Q.
+    Completeness is lost only for realizations that satisfy every non-group
+    constraint in Q yet violate Q solely through group subsumption failure — a
+    scenario that cannot arise when Q is group-free (hence the exact equality
+    in `denoteDiff_decompose`). -/
 theorem denoteDiff_approx (P Q : Program) (q : QualifiedConstraint)
     (hq : q ∈ Q) (hPure : has_pure_negation q.constraint) :
     denotes (P ∪ {flipMode q}) ⊆ denoteDiff P Q := by
