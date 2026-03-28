@@ -86,11 +86,6 @@ abbrev Selector₂ := Finset (Atom × Atom)
 
 def first(p : Atom × Atom) : Atom := p.1
 def firstOf(s : Selector₂) : Selector₁ := s.image first
-/--
-For a fixed key atom `a`, `fiber X a` is the unary selector of all atoms `b`
-such that `(a, b) ∈ X`.
--/
-def fiber (X : Selector₂) (a : Atom) : Selector₁ := (X.filter fun p => p.1 = a).image Prod.snd
 
 def lift₁ (R : Realization) (S : Selector₁) (P : Box → Prop) : Prop :=
   ∀ {a}, a ∈ S → ∃ b, R a = some b ∧ P b
@@ -177,18 +172,21 @@ def sat_align (R : Realization) : Selector₂ → AlignDir → Prop
 -- Groups
 --------------------------
 
-/-- Subsumption discipline. If two groups ever overlap in a realized box,
-    then one must globally contain the other across all boxes. -/
-def groupsSubsumptionGlobal (R : Realization) (Gs : Finset GroupBoundary) : Prop :=
-  ∀ g₁ g₂, g₁ ≠ g₂ → g₁ ∈ Gs → g₂ ∈ Gs →
-    ( (∃ b bb, R b = some bb ∧ contains g₁ bb ∧ contains g₂ bb) →
-      ( (∀ b bb, R b = some bb → contains g₁ bb → contains g₂ bb) ∨
-        (∀ b bb, R b = some bb → contains g₂ bb → contains g₁ bb) ) )
+/-- Unary grouping core (GRP1): the tightest boundary containing exactly
+    the selected atoms' boxes.
 
-/-- Unary grouping core (GRP1): one boundary contains exactly the selected atoms' boxes. -/
+   Minimality bit commented out:
+    Each edge of `g` is flush with some box,
+    ensuring `g` is the smallest such rectangle. -/
 def sat_group₁_core (R : Realization) (S : Selector₁) : Prop :=
   ∃ g : GroupBoundary,
-    ∀ a, ((∃ b, R a = some b ∧ contains g b) ↔ a ∈ S)
+    (∀ a, ((∃ b, R a = some b ∧ contains g b) ↔ a ∈ S))
+    -- ∧
+    -- (S.Nonempty →
+    --   (∃ a ∈ S, ∃ b, R a = some b ∧ g.x_tl = b.x_tl) ∧
+    --   (∃ a ∈ S, ∃ b, R a = some b ∧ g.y_tl = b.y_tl) ∧
+    --   (∃ a ∈ S, ∃ b, R a = some b ∧ g.x_br = b.x_tl + b.width) ∧
+    --   (∃ a ∈ S, ∃ b, R a = some b ∧ g.y_br = b.y_tl + b.height))
 
 
 
@@ -223,10 +221,6 @@ def simplePathsFrom (start : Atom) (succ : Atom → List Atom) (univ : Finset At
     else if vis.contains cur then [vis.reverse]
     else (succ cur).flatMap (fun n => dfs n (cur :: vis) (fuel - 1))
   dfs start [] univ.card
-
-/-- Contiguous subpath relation X ⊑ Y with properness (|X| < |Y|). -/
-def contigSubpath (X Y : List Atom) : Prop :=
-  X.length < Y.length ∧ ∃ j, X = (Y.drop j).take X.length
 
 /-- Boolean version for filtering. -/
 def contigSubpathB (X Y : List Atom) : Bool :=
@@ -351,23 +345,10 @@ abbrev Program := Finset QualifiedConstraint
 def compose (P Q : Program) : Program := P ∪ Q
 
 
-/-- For a program `P`, `Gs` lists all group boundaries actually used by its
-    positive group constraints.  Negated groups do not contribute boundaries;
-    they assert non-existence via `modelsNegC`. -/
-def groupWitnesses (R : Realization) (P : Program) (Gs : Finset GroupBoundary) : Prop :=
-  (∀ S,      (⟨Constraint.group₁ S, .always⟩ : QualifiedConstraint) ∈ P →
-     ∃ g ∈ Gs, ∀ a, ((∃ b, R a = some b ∧ contains g b) ↔ a ∈ S)) ∧
-  (∀ X addE, (⟨Constraint.group₂ X addE, .always⟩ : QualifiedConstraint) ∈ P →
-     ∃ fam : Atom → GroupBoundary,
-       (∀ a ∈ firstOf X, fam a ∈ Gs) ∧
-       (∀ a ∈ firstOf X, ∀ b, ((∃ bb, R b = some bb ∧ contains (fam a) bb) ↔ (a,b) ∈ X)))
-
-/-- Program satisfaction: keep per-constraint rules, add a single global `Gs`. -/
+/-- Program satisfaction: a realization models a program iff it satisfies
+    every qualified constraint in the program. -/
 def modelsP (R : Realization) (P : Program) : Prop :=
-  ∃ Gs : Finset GroupBoundary,
-    groupWitnesses R P Gs ∧
-    groupsSubsumptionGlobal R Gs ∧
-    (∀ c ∈ P, modelsQC R c)
+  ∀ c ∈ P, modelsQC R c
 
 --------------------------------------------------------------------------------
 -- Denotational Semantics
@@ -385,15 +366,7 @@ def denotes (P : Program) : Set Realization :=
 notation "⟦" P "⟧" => denotes P
 
 lemma denotes_empty : ⟦∅⟧ = WF := by
-  ext R
-  simp only [denotes, modelsP, Set.mem_setOf]
-  constructor
-  · intro ⟨hWF, Gs, _, _, _⟩
-    exact hWF
-  · intro hWF
-    use hWF
-    use ∅
-    simp [groupWitnesses, groupsSubsumptionGlobal]
+  ext R; simp [denotes, modelsP]
 
 
 
@@ -407,16 +380,8 @@ Adding a qualified constraint refines the denotation (shrinks the set).
 -/
 theorem refinement (P : Program) (C : QualifiedConstraint) :
   denotes (P ∪ {C}) ⊆ ⟦P⟧ := by
-  intro R h
-  simp only [denotes, modelsP] at h ⊢
-  rcases h with ⟨hWF, Gs, hGW, hGSub, hSat⟩
-  exact ⟨hWF, Gs, by
-    constructor
-    · intro S hS
-      exact hGW.1 S (Finset.mem_union_left {C} hS)
-    · intro X addE hX
-      exact hGW.2 X addE (Finset.mem_union_left {C} hX)
-  , hGSub, fun D hD => hSat D (Finset.mem_union_left {C} hD)⟩
+  intro R ⟨hWF, hSat⟩
+  exact ⟨hWF, fun c hc => hSat c (Finset.mem_union_left {C} hc)⟩
 
 
 /--
@@ -424,16 +389,8 @@ Corollary to `refinement`. If a program `P` is a subset of `Q`,
 then the denotation of `Q` is a superset of the denotation of `P`.
 -/
 theorem monotonicity {P Q : Program} (hPQ : P ⊆ Q) : (denotes Q) ⊆ (denotes P) := by
-  intro R hR
-  simp only [denotes, modelsP] at *
-  rcases hR with ⟨hWF, Gs, hGW, hGSub, hSatQ⟩
-  exact ⟨hWF, Gs, by
-    constructor
-    · intro S hS
-      exact hGW.1 S (hPQ hS)
-    · intro X addE hX
-      exact hGW.2 X addE (hPQ hX)
-  , hGSub, fun D hDP => hSatQ D (hPQ hDP)⟩
+  intro R ⟨hWF, hSat⟩
+  exact ⟨hWF, fun c hc => hSat c (hPQ hc)⟩
 
 
 /--
@@ -493,40 +450,37 @@ theorem denoteDiff_antitone_right {Q₁ Q₂ : Program} (h : Q₁ ⊆ Q₂) (P :
     denoteDiff P Q₁ ⊆ denoteDiff P Q₂ :=
   Set.diff_subset_diff_right (monotonicity h)
 
-/-- Composition (program union) refines both components: its denotation is
-    contained in the intersection of the individual denotations.
-
-    The reverse inclusion does not hold in general because merging group
-    boundary witnesses from two programs may violate `groupsSubsumptionGlobal`. -/
-theorem compose_sub_inter (P Q : Program) :
-    denotes (compose P Q) ⊆ denotes P ∩ denotes Q :=
-  fun _ hR => ⟨monotonicity Finset.subset_union_left hR,
-               monotonicity Finset.subset_union_right hR⟩
+/-- Composition (program union) equals the intersection of individual
+    denotations. -/
+theorem compose_eq_inter (P Q : Program) :
+    denotes (compose P Q) = denotes P ∩ denotes Q := by
+  ext R
+  simp only [denotes, compose, modelsP, Set.mem_inter_iff, Set.mem_setOf]
+  constructor
+  · intro ⟨hWF, hSat⟩
+    exact ⟨⟨hWF, fun c hc => hSat c (Finset.mem_union_left Q hc)⟩,
+           ⟨hWF, fun c hc => hSat c (Finset.mem_union_right P hc)⟩⟩
+  · intro ⟨⟨hWF, hSatP⟩, ⟨_, hSatQ⟩⟩
+    exact ⟨hWF, fun c hc => by
+      rcases Finset.mem_union.mp hc with h | h
+      · exact hSatP c h
+      · exact hSatQ c h⟩
 
 --------------------------------------------------------------------------------
 -- Pure Negation: Contradiction and Complement
 --------------------------------------------------------------------------------
-
-/-- A constraint has *pure negation* when `holds: never` is exactly the
-    logical negation of `holds: always`.  This now holds for every
-    constraint (including `group₂`). -/
-def has_pure_negation (c : Constraint) : Prop :=
-  ∀ R : Realization, modelsNegC R c ↔ ¬ modelsC R c
-
-/-- Every constraint has pure negation (since `modelsNegC` is `¬ modelsC`). -/
-lemma all_pure_neg (c : Constraint) : has_pure_negation c := fun _ => Iff.rfl
 
 /-- Exhaustiveness: every realization satisfies one mode. -/
 theorem pure_neg_exhaustive (c : Constraint)
     (R : Realization) : modelsC R c ∨ modelsNegC R c := by
   by_cases h : modelsC R c
   · exact Or.inl h
-  · exact Or.inr (((all_pure_neg c) R).mpr h)
+  · exact Or.inr h
 
 /-- Exclusivity: no realization satisfies both modes. -/
 theorem pure_neg_exclusive (c : Constraint)
     (R : Realization) : ¬ (modelsC R c ∧ modelsNegC R c) :=
-  fun ⟨hPos, hNeg⟩ => (((all_pure_neg c) R).mp hNeg) hPos
+  fun ⟨hPos, hNeg⟩ => hNeg hPos
 
 /-- A program with both `holds: always` and `holds: never` for the
     same constraint is unsatisfiable. -/
@@ -534,7 +488,7 @@ theorem always_never_unsat (P : Program) (c : Constraint)
     (hA : ⟨c, .always⟩ ∈ P) (hN : ⟨c, .never⟩ ∈ P) :
     denotes P = ∅ := by
   apply unsat_empty
-  intro R _ ⟨_, _, _, hSat⟩
+  intro R _ hSat
   exact pure_neg_exclusive c R ⟨hSat _ hA, hSat _ hN⟩
 
 /-- Complement intersection: ⟦{c, always}⟧ ∩ ⟦{c, never}⟧ = ∅. -/
@@ -544,8 +498,8 @@ theorem pure_neg_complement_inter (c : Constraint) :
   simp only [Set.mem_inter_iff, Set.mem_empty_iff_false, iff_false]
   intro ⟨hA, hN⟩
   simp only [denotes, modelsP, Set.mem_setOf] at hA hN
-  obtain ⟨_, _, _, _, hSatA⟩ := hA
-  obtain ⟨_, _, _, _, hSatN⟩ := hN
+  obtain ⟨_, hSatA⟩ := hA
+  obtain ⟨_, hSatN⟩ := hN
   exact pure_neg_exclusive c R
     ⟨hSatA _ (Finset.mem_singleton.mpr rfl), hSatN _ (Finset.mem_singleton.mpr rfl)⟩
 
@@ -561,44 +515,6 @@ theorem orientation_always_never_unsat (P : Program) (X : Selector₂) (d : Dire
     (hN : ⟨.orientation X d, .never⟩ ∈ P) :
     denotes P = ∅ :=
   always_never_unsat P (.orientation X d) hA hN
-
---------------------------------------------------------------------------------
--- Group Subsumption Consequences
---------------------------------------------------------------------------------
-
-/-- If two positive group₁ constraints have overlapping selectors (share
-    at least one atom), then in any valid realization one selector is
-    contained in the other.  This follows from the group subsumption
-    discipline: boundaries that overlap on any box must be globally nested. -/
-theorem group_overlap_nesting (P : Program) (S₁ S₂ : Selector₁)
-    (hA₁ : ⟨.group₁ S₁, .always⟩ ∈ P)
-    (hA₂ : ⟨.group₁ S₂, .always⟩ ∈ P)
-    (hOv : (S₁ ∩ S₂).Nonempty)
-    (R : Realization) (hR : R ∈ denotes P) :
-    S₁ ⊆ S₂ ∨ S₂ ⊆ S₁ := by
-  obtain ⟨_, Gs, hGW, hGSub, _⟩ := hR
-  obtain ⟨g₁, hg₁_mem, hg₁⟩ := hGW.1 S₁ hA₁
-  obtain ⟨g₂, hg₂_mem, hg₂⟩ := hGW.1 S₂ hA₂
-  obtain ⟨c, hc⟩ := hOv
-  rw [Finset.mem_inter] at hc
-  -- The shared atom c has a box in both group boundaries
-  obtain ⟨bc₁, hRc₁, hcont₁⟩ := (hg₁ c).mpr hc.1
-  obtain ⟨bc₂, hRc₂, hcont₂⟩ := (hg₂ c).mpr hc.2
-  have hbc : bc₁ = bc₂ := by simpa using hRc₁.symm.trans hRc₂
-  subst hbc
-  by_cases hg : g₁ = g₂
-  · -- Same boundary ⟹ same selector ⟹ S₁ ⊆ S₂
-    left; intro a ha
-    obtain ⟨ba, hRa, hconta⟩ := (hg₁ a).mpr ha
-    exact (hg₂ a).mp ⟨ba, hRa, hg ▸ hconta⟩
-  · -- Different boundaries sharing a box ⟹ subsumption gives nesting
-    rcases hGSub g₁ g₂ hg hg₁_mem hg₂_mem ⟨c, bc₁, hRc₁, hcont₁, hcont₂⟩ with h | h
-    · left; intro a ha
-      obtain ⟨ba, hRa, hconta⟩ := (hg₁ a).mpr ha
-      exact (hg₂ a).mp ⟨ba, hRa, h a ba hRa hconta⟩
-    · right; intro a ha
-      obtain ⟨ba, hRa, hconta⟩ := (hg₂ a).mpr ha
-      exact (hg₁ a).mp ⟨ba, hRa, h a ba hRa hconta⟩
 
 --------------------------------------------------------------------------------
 -- Set Difference Decomposition
@@ -620,55 +536,14 @@ def flipMode : QualifiedConstraint → QualifiedConstraint
 | ⟨c, .always⟩ => ⟨c, .never⟩
 | ⟨c, .never⟩  => ⟨c, .always⟩
 
-lemma flipMode_constraint (q : QualifiedConstraint) :
-    (flipMode q).constraint = q.constraint := by
-  rcases q with ⟨c, (_ | _)⟩ <;> rfl
-
 /-- Flipping mode negates satisfaction. -/
 lemma flipMode_neg (q : QualifiedConstraint) (R : Realization) :
     modelsQC R (flipMode q) ↔ ¬ modelsQC R q := by
   rcases q with ⟨c, (_ | _)⟩
-  · exact (all_pure_neg c) R
-  · exact ((not_congr ((all_pure_neg c) R)).trans not_not).symm
+  · exact Iff.rfl
+  · exact not_not.symm
 
-/-- A constraint is a group constraint (group₁ or group₂). -/
-def Constraint.isGroup : Constraint → Prop
-| .group₁ _ => True
-| .group₂ _ _ => True
-| _ => False
-
-/-- A program is group-free if it contains no group constraints. -/
-def groupFree (Q : Program) : Prop := ∀ q ∈ Q, ¬ Constraint.isGroup q.constraint
-
-/-- For group-free programs, satisfaction reduces to per-constraint satisfaction
-    (the group witness existential is trivially satisfied by `Gs = ∅`). -/
-lemma groupFree_modelsP (R : Realization) (Q : Program) (hGF : groupFree Q) :
-    modelsP R Q ↔ ∀ q ∈ Q, modelsQC R q := by
-  constructor
-  · exact fun ⟨_, _, _, hSat⟩ => hSat
-  · intro hSat
-    exact ⟨∅,
-      ⟨fun S hS => absurd (show Constraint.isGroup (.group₁ S) from trivial) (hGF _ hS),
-       fun X addE hX => absurd (show Constraint.isGroup (.group₂ X addE) from trivial) (hGF _ hX)⟩,
-      fun _ _ _ hg₁ => absurd hg₁ (Finset.notMem_empty _),
-      hSat⟩
-
-/-- Group witnesses extend from P to P ∪ {q} when q is not a group constraint. -/
-lemma groupWitnesses_insert {R : Realization} {P : Program} {Gs : Finset GroupBoundary}
-    (q : QualifiedConstraint) (hGW : groupWitnesses R P Gs)
-    (hng : ¬ Constraint.isGroup q.constraint) :
-    groupWitnesses R (P ∪ {q}) Gs := by
-  constructor
-  · intro S hS
-    rcases Finset.mem_union.mp hS with h | h
-    · exact hGW.1 S h
-    · exact absurd (Finset.mem_singleton.mp h ▸ show Constraint.isGroup (.group₁ S) from trivial) hng
-  · intro X addE hX
-    rcases Finset.mem_union.mp hX with h | h
-    · exact hGW.2 X addE h
-    · exact absurd (Finset.mem_singleton.mp h ▸ show Constraint.isGroup (.group₂ X addE) from trivial) hng
-
-/-- **Set difference decomposition.** For group-free Q:
+/-- **Set difference decomposition.**
 
     ⟦P⟧ \ ⟦Q⟧ = ⋃ q ∈ Q, ⟦P ∪ {flipMode q}⟧
 
@@ -676,7 +551,7 @@ lemma groupWitnesses_insert {R : Realization} {P : Program} {Gs : Finset GroupBo
     This shows that the denotation algebra is closed under set difference
     up to finite union (which programs cannot express internally, since
     programs are conjunctive). -/
-theorem denoteDiff_decompose (P Q : Program) (hGF : groupFree Q) :
+theorem denoteDiff_decompose (P Q : Program) :
     denoteDiff P Q = ⋃ q ∈ Q, denotes (P ∪ {flipMode q}) := by
   ext R
   simp only [denoteDiff, Set.mem_diff, Set.mem_iUnion₂]
@@ -685,39 +560,33 @@ theorem denoteDiff_decompose (P Q : Program) (hGF : groupFree Q) :
     intro ⟨hRP, hRQ⟩
     have hWF : R ∈ WF := hRP.1
     have hNMQ : ¬ modelsP R Q := fun h => hRQ ⟨hWF, h⟩
-    rw [groupFree_modelsP R Q hGF] at hNMQ; push_neg at hNMQ
+    simp only [modelsP] at hNMQ; push_neg at hNMQ
     obtain ⟨q, hqQ, hNeg⟩ := hNMQ
-    obtain ⟨Gs, hGW, hGSub, hSat⟩ := hRP.2
-    refine ⟨q, hqQ, hWF, Gs,
-      groupWitnesses_insert _ hGW (flipMode_constraint q ▸ hGF q hqQ), hGSub, ?_⟩
-    intro c hc
+    refine ⟨q, hqQ, hWF, fun c hc => ?_⟩
     rcases Finset.mem_union.mp hc with hP | hF
-    · exact hSat c hP
+    · exact hRP.2 c hP
     · rw [Finset.mem_singleton.mp hF]
       exact (flipMode_neg q R).mpr hNeg
   · -- Reverse: ∃ q ∈ Q, R ∈ ⟦P ∪ {flipMode q}⟧ → R ∈ ⟦P⟧ ∧ R ∉ ⟦Q⟧
-    intro ⟨q, hqQ, hWF, Gs, hGW, hGSub, hSat⟩
-    refine ⟨⟨hWF, Gs, ⟨fun S hS => hGW.1 S (Finset.mem_union_left _ hS),
-      fun X addE hX => hGW.2 X addE (Finset.mem_union_left _ hX)⟩,
-      hGSub, fun c hc => hSat c (Finset.mem_union_left _ hc)⟩, ?_⟩
+    intro ⟨q, hqQ, hWF, hSat⟩
+    refine ⟨⟨hWF, fun c hc => hSat c (Finset.mem_union_left _ hc)⟩, ?_⟩
     intro ⟨_, hMQ⟩
-    rw [groupFree_modelsP R Q hGF] at hMQ
     have hFlip := hSat (flipMode q) (Finset.mem_union_right _ (Finset.mem_singleton.mpr rfl))
     rw [flipMode_neg q R] at hFlip
     exact hFlip (hMQ q hqQ)
 
 /-- **Under-approximation of set difference.** For any q ∈ Q,
     ⟦P ∪ {flipMode q}⟧ ⊆ ⟦P⟧ \ ⟦Q⟧.
-    If R satisfies flip(q), it violates q, so `modelsP R Q` fails regardless
-    of whether Q's group subsumption holds. Unlike `denoteDiff_decompose`,
-    this requires no `groupFree` condition on Q. -/
+    If R satisfies flip(q), it violates q, so `modelsP R Q` fails.
+    Unlike `denoteDiff_decompose`, this requires no `groupFree`
+    condition on Q. -/
 theorem denoteDiff_approx (P Q : Program) (q : QualifiedConstraint)
     (hq : q ∈ Q) :
     denotes (P ∪ {flipMode q}) ⊆ denoteDiff P Q := by
   intro R hR
   refine ⟨monotonicity Finset.subset_union_left hR, ?_⟩
-  intro ⟨_, _, _, _, hSatQ⟩
-  obtain ⟨_, _, _, _, hSatPF⟩ := hR
+  intro ⟨_, hSatQ⟩
+  obtain ⟨_, hSatPF⟩ := hR
   have hFlip := hSatPF (flipMode q) (Finset.mem_union_right _ (Finset.mem_singleton.mpr rfl))
   exact ((flipMode_neg q R).mp hFlip) (hSatQ q hq)
 
@@ -730,16 +599,16 @@ theorem denoteDiff_witness (P Q : Program)
     ∃ M : Program, denotes M ⊆ denoteDiff P Q :=
   ⟨P ∪ {flipMode q}, denoteDiff_approx P Q q hq⟩
 
+
 #check refinement
 #check monotonicity
 #check unsat_iff_empty
 #check denoteDiff
 #check denoteDiff_empty_iff
 #check denoteDiff_decompose
-#check compose_sub_inter
+#check compose_eq_inter
 #check always_never_unsat
 #check pure_neg_complement_inter
 #check orientation_always_never_unsat
-#check group_overlap_nesting
 
 end Spytial
