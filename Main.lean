@@ -578,8 +578,7 @@ theorem denoteDiff_decompose (P Q : Program) :
 /-- **Under-approximation of set difference.** For any q ∈ Q,
     ⟦P ∪ {flipMode q}⟧ ⊆ ⟦P⟧ \ ⟦Q⟧.
     If R satisfies flip(q), it violates q, so `modelsP R Q` fails.
-    Unlike `denoteDiff_decompose`, this requires no `groupFree`
-    condition on Q. -/
+    -/
 theorem denoteDiff_approx (P Q : Program) (q : QualifiedConstraint)
     (hq : q ∈ Q) :
     denotes (P ∪ {flipMode q}) ⊆ denoteDiff P Q := by
