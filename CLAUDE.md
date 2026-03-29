@@ -26,6 +26,7 @@ All proofs are kernel-checked by `lake build` (except `cyclic_cw_ccw_unsat` whic
 - `compose_eq_inter` — ⟦P ∪ Q⟧ = ⟦P⟧ ∩ ⟦Q⟧
 - `denotes_empty` — ⟦∅⟧ = WF
 - `compose_comm/assoc/idem` — (Program/≡, compose) is a commutative idempotent monoid
+- `full_abstraction` — observational ≡ denotational equivalence (fully abstract)
 
 **Unsatisfiability:**
 - `unsat_iff_empty` — unsatisfiability iff empty denotation

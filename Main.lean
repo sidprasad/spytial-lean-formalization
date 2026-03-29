@@ -656,6 +656,36 @@ theorem compose_congr {P₁ P₂ Q₁ Q₂ : Program}
   simp only [compose_eq_inter, hP, hQ]
 
 --------------------------------------------------------------------------------
+-- Observational Equivalence & Full Abstraction
+--------------------------------------------------------------------------------
+
+/-- Observational equivalence: two programs are observationally equivalent
+    iff no composition context can distinguish them. -/
+def obs_equiv (P Q : Program) : Prop :=
+  ∀ C : Program, denotes (compose C P) = denotes (compose C Q)
+
+infix:50 " ≈ₒ " => obs_equiv
+
+/-- Denotational equivalence implies observational equivalence. -/
+theorem prog_equiv_imp_obs_equiv {P Q : Program} (h : P ≃ₚ Q) : P ≈ₒ Q :=
+  fun C => compose_congr (prog_equiv_refl C) h
+
+/-- Observational equivalence implies denotational equivalence.
+    Witnessed by the empty context. -/
+theorem obs_equiv_imp_prog_equiv {P Q : Program} (h : P ≈ₒ Q) : P ≃ₚ Q := by
+  have h₀ := h ∅
+  simp only [compose_eq_inter, denotes_empty] at h₀
+  rw [Set.inter_eq_right.mpr (denotes_sub_WF P),
+      Set.inter_eq_right.mpr (denotes_sub_WF Q)] at h₀
+  exact h₀
+
+/-- **Full abstraction**: observational equivalence coincides with
+    denotational equivalence. The spatial constraint algebra is
+    fully abstract with respect to composition contexts. -/
+theorem full_abstraction (P Q : Program) : P ≃ₚ Q ↔ P ≈ₒ Q :=
+  ⟨prog_equiv_imp_obs_equiv, obs_equiv_imp_prog_equiv⟩
+
+--------------------------------------------------------------------------------
 -- Semantic Entailment
 --------------------------------------------------------------------------------
 
