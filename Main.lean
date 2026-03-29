@@ -722,7 +722,7 @@ theorem constraint_redundant (P : Program) (q : QualifiedConstraint)
     exact ⟨hWF, fun c hc => hSat c (Finset.mem_union_left _ hc)⟩
 
 --------------------------------------------------------------------------------
--- Atom Footprint & Frame Rule
+-- Atom Footprint
 --------------------------------------------------------------------------------
 
 /-- Extract the set of atoms mentioned by a constraint. -/
