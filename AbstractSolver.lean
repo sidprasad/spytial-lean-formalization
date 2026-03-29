@@ -180,20 +180,6 @@ def translate_cyclic_path_at_k (dims : DimCtx) (L : List Atom) (k : Nat)
     ((List.range n).filter (· > i)).map fun j => (i, j)
   pairs.flatMap fun (i, j) => translate_cyclic_pair dims L i j k oracle
 
-/-- Translate a cyclic constraint as a disjunction over rotation offsets. -/
-noncomputable def translate_cyclic (dims : DimCtx) (X : Selector₂) (rot : Rotation)
-    (oracle : TrigOracle) : List (List LinearIneq) :=
-  let paths := match rot with
-    | .clockwise        => maximalSimplePaths X
-    | .counterclockwise => (maximalSimplePaths X).map List.reverse
-  paths.flatMap fun L =>
-    if L.length ≤ 2 then [[]]
-    else (List.range L.length).map fun k => translate_cyclic_path_at_k dims L k oracle
-
-/-- Feasibility of a disjunctive system: at least one alternative is feasible. -/
-def feasible_disj (alts : List (List LinearIneq)) : Prop :=
-  ∃ alt ∈ alts, feasible alt
-
 --------------------------------------------------------------------------------
 -- Reconstruction: Assignment → Realization
 --------------------------------------------------------------------------------
@@ -1120,7 +1106,7 @@ private theorem cyclic_path_complete
     for each path there exists a feasible offset in the disjunctive system.
 
     Specifically, for each path L, the offset k witnessing allPairs_ok
-    yields a satisfied alternative in translate_cyclic. -/
+    yields a satisfied alternative in the per-path disjunctive system. -/
 theorem cyclic_complete
     (dims : DimCtx) (X : Selector₂) (rot : Rotation)
     (oracle : TrigOracle) (R : Realization)
@@ -1182,6 +1168,9 @@ structure SolverCtx where
   atoms : Finset Atom
   dims  : DimCtx
   gids  : Atom → GroupId
+  /-- Each group₁ constraint (identified by its selector) gets a unique GroupId
+      so that distinct groups use independent bounding-box variables. -/
+  group₁_gid : Selector₁ → GroupId
   oracle : TrigOracle
 
 /-- A conjunctive translation of a single positive constraint.
@@ -1190,7 +1179,7 @@ noncomputable def translate_constraint_conj (ctx : SolverCtx) :
     Constraint → List LinearIneq
   | .orientation X d => translate_orientation ctx.dims X d
   | .align X a       => translate_align X a
-  | .group₁ S        => translate_group₁ ctx.dims S ⟨0⟩  -- default group ID
+  | .group₁ S        => translate_group₁ ctx.dims S (ctx.group₁_gid S)
   | .group₂ X _      => translate_group₂ ctx.dims X ctx.gids
   | .size w h S       => translate_size w h S
   | .hideatom S       => translate_hide S
