@@ -7,23 +7,38 @@ of an `Input` evolve.  This file casts that asymmetry as a type system —
 denotational lifting lives in `Interpretation.lean`, which is gated on the
 typing judgment so that ill-typed inputs cannot be interpreted at all.
 
+## Shapes carry `holds`
+
+A `ConstraintShape` is a `(kind, holds)` pair: a `ConstraintKind`
+(e.g. `.align .horizontal`) plus its modal qualifier (`.always` / `.never`).
+Resolvers in an `Input` are keyed on the full shape, so an `always` rule
+and a `never` rule of the same kind have *independent* selectors.  This
+makes specs like
+
+* `align horizontal {a, b}` *holds always*
+* `align horizontal {c, d}` *holds never*
+
+expressible — they don't collide on a single selector slot.
+
+A `SpecRule` is just a `ConstraintShape`; the abbrev is kept for readability.
+
 ## Typing rules
 
 `WellTyped S I` is a structure with four typing premises:
 
 * **(SCOPE)**     every rule's selector ⊆ `I.atoms`
-* **(ARITY₁)**    binary shapes have empty `resolve₁` (operationally arity-correct)
-* **(ARITY₂)**    unary shapes have empty `resolve₂`
-* **(HIDE-GEOM)** when `S` requires hiding atoms (`always`-mode `.hideatom`),
-                  no other `always`-mode geometric rule may reference any
-                  hidden atom.
+* **(ARITY₁)**    binary-kind shapes have empty `resolve₁` (operationally arity-correct)
+* **(ARITY₂)**    unary-kind shapes have empty `resolve₂`
+* **(HIDE-GEOM)** when `S` requires hiding atoms (i.e.
+                  `⟨.hideatom, .always⟩ ∈ S`), no other `always`-mode
+                  geometric rule may reference any hidden atom.
 
 ## Operational steps
 
 `Step I I'` has four constructors corresponding to user-level operations:
 `addAtom`, `removeAtom`, `setSel₁`, `setSel₂`.  Arity-correctness for
 `setSel₁/₂` is enforced *operationally* — they only apply at unary/binary
-shapes, respectively, so writing a unary selector to a binary slot is not
+kinds, respectively, so writing a unary selector to a binary slot is not
 constructible.
 
 ### Note on selector semantics
@@ -48,42 +63,53 @@ import Main
 namespace Spytial
 
 --------------------------------------------------------------------------------
--- ConstraintShape: a Constraint minus its selector
+-- ConstraintKind: the structural part of a constraint, minus selector and holds
 --------------------------------------------------------------------------------
 
-inductive ConstraintShape where
-| orientation : Direction → ConstraintShape
-| align       : AlignDir  → ConstraintShape
-| cyclic      : Rotation  → ConstraintShape
-| group₁      : ConstraintShape
-| group₂      : (addEdge : Bool) → ConstraintShape
-| size        : (w h : ℚ) → ConstraintShape
-| hideatom    : ConstraintShape
+inductive ConstraintKind where
+| orientation : Direction → ConstraintKind
+| align       : AlignDir  → ConstraintKind
+| cyclic      : Rotation  → ConstraintKind
+| group₁      : ConstraintKind
+| group₂      : (addEdge : Bool) → ConstraintKind
+| size        : (w h : ℚ) → ConstraintKind
+| hideatom    : ConstraintKind
 deriving DecidableEq, Repr
 
 inductive Arity | unary | binary
 deriving DecidableEq, Repr
 
-def shapeArity : ConstraintShape → Arity
+def kindArity : ConstraintKind → Arity
 | .orientation _ | .align _ | .cyclic _ | .group₂ _ => .binary
 | .group₁ | .size _ _ | .hideatom                   => .unary
 
-/-- A shape is *geometric* iff it requires its atoms to have boxes (i.e.
-    be visible).  Every shape except `.hideatom` is geometric. -/
-def isGeometric : ConstraintShape → Bool
+/-- A kind is *geometric* iff it requires its atoms to have boxes (i.e.
+    be visible).  Every kind except `.hideatom` is geometric. -/
+def isGeometric : ConstraintKind → Bool
 | .hideatom => false
 | _         => true
 
 --------------------------------------------------------------------------------
--- SpecRule and Spec (the constant part)
+-- ConstraintShape: a (kind, holds) pair
+--
+-- Folding `holds` into the shape means resolvers are keyed on `(kind, holds)`,
+-- so `always` and `never` variants of the same kind get independent selectors.
 --------------------------------------------------------------------------------
 
-structure SpecRule where
-  shape : ConstraintShape
+structure ConstraintShape where
+  kind  : ConstraintKind
   holds : HoldsMode := .always
 deriving DecidableEq, Repr
 
-abbrev Spec := Finset SpecRule
+--------------------------------------------------------------------------------
+-- SpecRule and Spec (the constant part)
+--
+-- A `SpecRule` is just a `ConstraintShape`.  The abbrev is kept for the
+-- spec-vs-resolver distinction in prose; semantically they are the same.
+--------------------------------------------------------------------------------
+
+abbrev SpecRule := ConstraintShape
+abbrev Spec     := Finset SpecRule
 
 --------------------------------------------------------------------------------
 -- Input (the varying part)
@@ -96,37 +122,40 @@ structure Input where
 
 /-- The atoms a rule "talks about" given the input's selector resolution.
 
-    Defined conservatively as the union of *both* resolvers' atoms at
-    `r.shape`.  In a `WellTyped` input, the ARITY rules guarantee that
-    only the resolver appropriate to the shape's arity is non-empty, so
-    this union has only one nonempty term in practice — but stating it
-    as a union makes proof reasoning uniform. -/
+    Defined conservatively as the union of *both* resolvers' atoms at `r`.
+    In a `WellTyped` input, the ARITY rules guarantee that only the resolver
+    appropriate to the kind's arity is non-empty, so this union has only one
+    nonempty term in practice — but stating it as a union makes proof
+    reasoning uniform. -/
 def selectedAtoms (I : Input) (r : SpecRule) : Finset Atom :=
-  I.resolve₁ r.shape ∪
-  (I.resolve₂ r.shape).image Prod.fst ∪
-  (I.resolve₂ r.shape).image Prod.snd
+  I.resolve₁ r ∪
+  (I.resolve₂ r).image Prod.fst ∪
+  (I.resolve₂ r).image Prod.snd
 
 --------------------------------------------------------------------------------
 -- The typing judgment
 --------------------------------------------------------------------------------
+
+/-- The canonical "hidden-set" key: the always-mode hideatom shape. -/
+abbrev hideKey : ConstraintShape := ⟨ConstraintKind.hideatom, HoldsMode.always⟩
 
 /-- `WellTyped S I` — input `I` is structurally compatible with spec `S`. -/
 structure WellTyped (S : Spec) (I : Input) : Prop where
   /-- (SCOPE) Every rule's selector references only in-scope atoms. -/
   scope :
     ∀ r ∈ S, selectedAtoms I r ⊆ I.atoms
-  /-- (ARITY₁) Binary shapes have empty `resolve₁`. -/
+  /-- (ARITY₁) Binary-kind shapes have empty `resolve₁`. -/
   arity₁ :
-    ∀ sh, shapeArity sh = Arity.binary → I.resolve₁ sh = ∅
-  /-- (ARITY₂) Unary shapes have empty `resolve₂`. -/
+    ∀ sh, kindArity sh.kind = Arity.binary → I.resolve₁ sh = ∅
+  /-- (ARITY₂) Unary-kind shapes have empty `resolve₂`. -/
   arity₂ :
-    ∀ sh, shapeArity sh = Arity.unary → I.resolve₂ sh = ∅
+    ∀ sh, kindArity sh.kind = Arity.unary → I.resolve₂ sh = ∅
   /-- (HIDE-GEOM) When `S` requires hiding atoms, no other `always`-mode
       geometric rule may reference any hidden atom. -/
   hide_geom :
-    ⟨ConstraintShape.hideatom, HoldsMode.always⟩ ∈ S →
-    ∀ rG ∈ S, rG.holds = HoldsMode.always → isGeometric rG.shape = true →
-    Disjoint (I.resolve₁ ConstraintShape.hideatom) (selectedAtoms I rG)
+    hideKey ∈ S →
+    ∀ rG ∈ S, rG.holds = HoldsMode.always → isGeometric rG.kind = true →
+    Disjoint (I.resolve₁ hideKey) (selectedAtoms I rG)
 
 --------------------------------------------------------------------------------
 -- Operational steps
@@ -153,10 +182,10 @@ inductive Step : Input → Input → Prop where
 | removeAtom (I : Input) (a : Atom) :
     Step I (I.removeAtom a)
 | setSel₁    (I : Input) (sh : ConstraintShape) (v : Selector₁)
-             (h : shapeArity sh = Arity.unary) :
+             (h : kindArity sh.kind = Arity.unary) :
     Step I (I.setSel₁ sh v)
 | setSel₂    (I : Input) (sh : ConstraintShape) (v : Selector₂)
-             (h : shapeArity sh = Arity.binary) :
+             (h : kindArity sh.kind = Arity.binary) :
     Step I (I.setSel₂ sh v)
 
 --------------------------------------------------------------------------------
@@ -246,27 +275,27 @@ theorem WellTyped.preserve_removeAtom {S : Spec} {I : Input}
 
     Three structural obligations beyond `hWT`:
     * `hScope`   — the new selector `v` is in scope of `I.atoms`,
-    * `hHide_a`  — if `sh = .hideatom`, the new hidden set `v` is disjoint
+    * `hHide_a`  — if `sh = hideKey`, the new hidden set `v` is disjoint
                   from every positive geometric rule's selected atoms,
-    * `hHide_b`  — if `sh ≠ .hideatom` (so `sh` is geometric unary), and
-                  there is an `always`-mode rule with shape `sh`, the
-                  current hidden set is disjoint from `v`.
+    * `hHide_b`  — if `sh ≠ hideKey`, and there is an `always`-mode rule
+                  whose shape equals `sh`, the current hidden set is
+                  disjoint from `v`.
 
     ARITY₁/ARITY₂ preservation is automatic from `hArity`. -/
 theorem WellTyped.preserve_setSel₁ {S : Spec} {I : Input}
     (hWT : WellTyped S I) (sh : ConstraintShape) (v : Selector₁)
-    (hArity : shapeArity sh = Arity.unary)
+    (hArity : kindArity sh.kind = Arity.unary)
     (hScope : v ⊆ I.atoms)
     (hHide_a :
-      sh = ConstraintShape.hideatom →
-      ⟨ConstraintShape.hideatom, HoldsMode.always⟩ ∈ S →
-      ∀ rG ∈ S, rG.holds = HoldsMode.always → isGeometric rG.shape = true →
+      sh = hideKey →
+      hideKey ∈ S →
+      ∀ rG ∈ S, rG.holds = HoldsMode.always → isGeometric rG.kind = true →
       Disjoint v (selectedAtoms I rG))
     (hHide_b :
-      sh ≠ ConstraintShape.hideatom →
-      ⟨ConstraintShape.hideatom, HoldsMode.always⟩ ∈ S →
-      ∀ rG ∈ S, rG.shape = sh → rG.holds = HoldsMode.always →
-      Disjoint (I.resolve₁ ConstraintShape.hideatom) v) :
+      sh ≠ hideKey →
+      hideKey ∈ S →
+      ∀ rG ∈ S, rG = sh → rG.holds = HoldsMode.always →
+      Disjoint (I.resolve₁ hideKey) v) :
     WellTyped S (I.setSel₁ sh v) := by
   refine ⟨?_, ?_, ?_, ?_⟩
   · -- SCOPE
@@ -275,14 +304,14 @@ theorem WellTyped.preserve_setSel₁ {S : Spec} {I : Input}
     simp only [selectedAtoms, resolve₁_setSel₁, resolve₂_setSel₁] at hx
     rcases Finset.mem_union.mp hx with hx | hx
     · rcases Finset.mem_union.mp hx with hupd | hf
-      · by_cases hsh : r.shape = sh
-        · rw [hsh, Function.update_self] at hupd
+      · by_cases hrsh : r = sh
+        · rw [hrsh, Function.update_self] at hupd
           exact hScope hupd
-        · rw [Function.update_of_ne hsh] at hupd
+        · rw [Function.update_of_ne hrsh] at hupd
           exact hWT.scope r hr (Finset.mem_union_left _ (Finset.mem_union_left _ hupd))
       · exact hWT.scope r hr (Finset.mem_union_left _ (Finset.mem_union_right _ hf))
     · exact hWT.scope r hr (Finset.mem_union_right _ hx)
-  · -- ARITY₁: sh is unary, so binary slots are unchanged.
+  · -- ARITY₁: sh's kind is unary, so binary slots are unchanged.
     intro sh' hsh'
     have hne : sh' ≠ sh := by
       intro heq; rw [heq] at hsh'; rw [hsh'] at hArity; cases hArity
@@ -293,35 +322,35 @@ theorem WellTyped.preserve_setSel₁ {S : Spec} {I : Input}
     exact hWT.arity₂
   · -- HIDE-GEOM
     intro hHide rG hr hh hg
-    show Disjoint ((I.setSel₁ sh v).resolve₁ ConstraintShape.hideatom)
+    show Disjoint ((I.setSel₁ sh v).resolve₁ hideKey)
                   (selectedAtoms (I.setSel₁ sh v) rG)
-    by_cases hsh : sh = ConstraintShape.hideatom
-    · -- sh = .hideatom: hidden becomes v.
-      have hresolve : (I.setSel₁ sh v).resolve₁ ConstraintShape.hideatom = v := by
+    by_cases hsh : sh = hideKey
+    · -- sh = hideKey: hidden becomes v.
+      have hresolve : (I.setSel₁ sh v).resolve₁ hideKey = v := by
         simp only [resolve₁_setSel₁]; rw [hsh]; exact Function.update_self _ _ _
       rw [hresolve]
-      have hrG_ne_sh : rG.shape ≠ sh := by
+      -- Since sh.kind = .hideatom is non-geometric, rG ≠ sh.
+      have hrG_ne_sh : rG ≠ sh := by
         intro heq; rw [heq, hsh] at hg; simp [isGeometric] at hg
       have hsel : selectedAtoms (I.setSel₁ sh v) rG = selectedAtoms I rG := by
         simp only [selectedAtoms, resolve₁_setSel₁, resolve₂_setSel₁]
         rw [Function.update_of_ne hrG_ne_sh]
       rw [hsel]
       exact hHide_a hsh hHide rG hr hh hg
-    · -- sh ≠ .hideatom: hidden unchanged.
-      have hresolve : (I.setSel₁ sh v).resolve₁ ConstraintShape.hideatom
-                       = I.resolve₁ ConstraintShape.hideatom := by
+    · -- sh ≠ hideKey: hidden unchanged.
+      have hresolve : (I.setSel₁ sh v).resolve₁ hideKey = I.resolve₁ hideKey := by
         simp only [resolve₁_setSel₁]
         exact Function.update_of_ne (Ne.symm hsh) _ _
       rw [hresolve]
-      by_cases hrGsh : rG.shape = sh
-      · -- rG.shape = sh: selectedAtoms = v (using arity₂ to drop resolve₂).
+      by_cases hrGsh : rG = sh
+      · -- rG = sh: selectedAtoms = v (using arity₂ to drop resolve₂).
         have hres2 : I.resolve₂ sh = ∅ := hWT.arity₂ sh hArity
         have hsel : selectedAtoms (I.setSel₁ sh v) rG = v := by
           simp only [selectedAtoms, resolve₁_setSel₁, resolve₂_setSel₁]
           rw [hrGsh, Function.update_self, hres2]; simp
         rw [hsel]
         exact hHide_b hsh hHide rG hr hrGsh hh
-      · -- rG.shape ≠ sh: selectedAtoms unchanged.
+      · -- rG ≠ sh: selectedAtoms unchanged.
         have hsel : selectedAtoms (I.setSel₁ sh v) rG = selectedAtoms I rG := by
           simp only [selectedAtoms, resolve₁_setSel₁, resolve₂_setSel₁]
           rw [Function.update_of_ne hrGsh]
@@ -331,16 +360,16 @@ theorem WellTyped.preserve_setSel₁ {S : Spec} {I : Input}
 /-- **setSel₂ preservation** at a binary shape `sh`.
 
     Obligations: scope on both projections of `v`, plus a HIDE-GEOM
-    obligation for any `always`-mode rule with shape `sh`. -/
+    obligation for any `always`-mode rule whose shape equals `sh`. -/
 theorem WellTyped.preserve_setSel₂ {S : Spec} {I : Input}
     (hWT : WellTyped S I) (sh : ConstraintShape) (v : Selector₂)
-    (hArity : shapeArity sh = Arity.binary)
+    (hArity : kindArity sh.kind = Arity.binary)
     (hScopeFst : v.image Prod.fst ⊆ I.atoms)
     (hScopeSnd : v.image Prod.snd ⊆ I.atoms)
     (hHide :
-      ⟨ConstraintShape.hideatom, HoldsMode.always⟩ ∈ S →
-      ∀ rG ∈ S, rG.shape = sh → rG.holds = HoldsMode.always →
-      Disjoint (I.resolve₁ ConstraintShape.hideatom)
+      hideKey ∈ S →
+      ∀ rG ∈ S, rG = sh → rG.holds = HoldsMode.always →
+      Disjoint (I.resolve₁ hideKey)
                (v.image Prod.fst ∪ v.image Prod.snd)) :
     WellTyped S (I.setSel₂ sh v) := by
   refine ⟨?_, ?_, ?_, ?_⟩
@@ -351,19 +380,19 @@ theorem WellTyped.preserve_setSel₂ {S : Spec} {I : Input}
     rcases Finset.mem_union.mp hx with hx | hsnd
     · rcases Finset.mem_union.mp hx with hr1 | hfst
       · exact hWT.scope r hr (Finset.mem_union_left _ (Finset.mem_union_left _ hr1))
-      · by_cases hsh : r.shape = sh
+      · by_cases hsh : r = sh
         · rw [hsh, Function.update_self] at hfst
           exact hScopeFst hfst
         · rw [Function.update_of_ne hsh] at hfst
           exact hWT.scope r hr (Finset.mem_union_left _ (Finset.mem_union_right _ hfst))
-    · by_cases hsh : r.shape = sh
+    · by_cases hsh : r = sh
       · rw [hsh, Function.update_self] at hsnd
         exact hScopeSnd hsnd
       · rw [Function.update_of_ne hsh] at hsnd
         exact hWT.scope r hr (Finset.mem_union_right _ hsnd)
   · -- ARITY₁: resolve₁ unchanged.
     exact hWT.arity₁
-  · -- ARITY₂: sh is binary, so unary slots are unchanged.
+  · -- ARITY₂: sh's kind is binary, so unary slots are unchanged.
     intro sh' hsh'
     have hne : sh' ≠ sh := by
       intro heq; rw [heq] at hsh'; rw [hsh'] at hArity; cases hArity
@@ -372,10 +401,9 @@ theorem WellTyped.preserve_setSel₂ {S : Spec} {I : Input}
     exact hWT.arity₂ sh' hsh'
   · -- HIDE-GEOM
     intro hHideMem rG hr hh hg
-    show Disjoint (I.resolve₁ ConstraintShape.hideatom)
-                  (selectedAtoms (I.setSel₂ sh v) rG)
-    by_cases hrGsh : rG.shape = sh
-    · -- rG.shape = sh: selectedAtoms = v.image fst ∪ v.image snd.
+    show Disjoint (I.resolve₁ hideKey) (selectedAtoms (I.setSel₂ sh v) rG)
+    by_cases hrGsh : rG = sh
+    · -- rG = sh: selectedAtoms = v.image fst ∪ v.image snd.
       have hres1 : I.resolve₁ sh = ∅ := hWT.arity₁ sh hArity
       have hsel : selectedAtoms (I.setSel₂ sh v) rG
                    = v.image Prod.fst ∪ v.image Prod.snd := by
@@ -383,7 +411,7 @@ theorem WellTyped.preserve_setSel₂ {S : Spec} {I : Input}
         rw [hrGsh, Function.update_self, hres1]; simp
       rw [hsel]
       exact hHide hHideMem rG hr hrGsh hh
-    · -- rG.shape ≠ sh: selectedAtoms unchanged.
+    · -- rG ≠ sh: selectedAtoms unchanged.
       have hsel : selectedAtoms (I.setSel₂ sh v) rG = selectedAtoms I rG := by
         simp only [selectedAtoms, resolve₁_setSel₂, resolve₂_setSel₂]
         rw [Function.update_of_ne hrGsh]
