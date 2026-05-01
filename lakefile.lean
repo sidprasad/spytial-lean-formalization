@@ -12,6 +12,8 @@ lean_lib ModalQuery
 
 lean_lib Input
 
+lean_lib Interpretation
+
 require mathlib from
   git "https://github.com/leanprover-community/mathlib4" @ "master"
 
