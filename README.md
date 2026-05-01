@@ -85,3 +85,8 @@ lake build
 - Ensure `elan` is in your PATH
 - Restart VS Code
 
+
+#########
+
+
+When are spytial specifications interpretable as constraints for structured input?
