@@ -42,13 +42,19 @@ quasi-IIS from the program and re-solves.
 
 spytial-core's **qualitative validator** (the default since the
 re-architecture) instead computes a global **MFS** and removes its
-complement. This is the *dual* approach — and it is generally **more
-aggressive**: a single MFS-removal pass breaks **every** IIS at once
-(via the hitting-set property `mfs_hits_every_iis`), whereas a single
-IIS-removal pass only breaks the IIS that was selected.
+complement. These two strategies are **not equivalent**:
 
-Both strategies produce a feasible counterfactual; this file
-formalizes both and proves they are duals.
+* **MFS-keeping** is feasible *by construction* (`mfs_kept_is_feasible`).
+* **IIS-removal** is *not* guaranteed feasible: removing a single IIS
+  `I` leaves `P \ I`, which can still contain another IIS (theorem
+  `iis_removal_can_remain_infeasible` — when two IISes are disjoint,
+  removing one preserves the other's infeasibility).
+
+A single MFS pass breaks **every** IIS simultaneously (via the
+hitting-set property `mfs_hits_every_iis`); a single IIS pass breaks
+only the chosen one. The paper's strategy is therefore an *iterative*
+relaxation (one IIS at a time, until feasible), while spytial-core's
+qualitative validator computes the feasible target in one pass.
 
 ## File outline
 
@@ -332,6 +338,46 @@ theorem iis_complement_is_hitting_set {P M I : Program}
   obtain ⟨c, hcI, hcM⟩ := mfs_hits_every_iis hMFS hIIS
   exact ⟨c, Finset.mem_inter.mpr ⟨hcI, Finset.mem_sdiff.mpr ⟨hIIS.subset hcI, hcM⟩⟩⟩
 
+/-- **MFS-keeping yields feasibility by definition** — trivial restatement,
+    but stated explicitly to make the contrast with IIS-removal sharp.
+    The MFS `M` *is* the rendered program; it is feasible by `IsMFS.feasible`. -/
+theorem mfs_kept_is_feasible {P M : Program} (hMFS : IsMFS P M) :
+    Feasible M := hMFS.feasible
+
+/-- **IIS-removal does NOT generally yield feasibility.** This formalizes
+    the asymmetry between MFS-keeping and IIS-removal:
+
+    * `mfs_kept_is_feasible` — removing the MFS-complement always leaves
+      a feasible program.
+    * This theorem — removing a single IIS need not, because *other*
+      IISes can persist.
+
+    *Witness condition.* If `P` contains two **disjoint** IISes `I₁` and
+    `I₂`, then `P \ I₁` is still infeasible: `I₂ ⊆ P \ I₁` (since `I₂` is
+    in `P` but disjoint from `I₁`), and `I₂` is infeasible by assumption,
+    so by `feasible_of_subset` any superset of `I₂` is infeasible too.
+
+    This is why spytial-core's qualitative validator uses MFS-keeping
+    rather than iterative IIS-removal: a single MFS pass breaks every
+    IIS simultaneously (`mfs_hits_every_iis`), whereas a single IIS pass
+    only breaks the chosen one. -/
+theorem iis_removal_can_remain_infeasible {P I₁ I₂ : Program}
+    (_hI₁ : IsIIS P I₁) (hI₂ : IsIIS P I₂) (hDisj : Disjoint I₁ I₂) :
+    ¬ Feasible (P \ I₁) := by
+  -- (`_hI₁` unused in the proof — kept for semantic framing: the user's
+  --  concern is specifically about removing an IIS. The proof itself
+  --  only needs that I₂ is an IIS and I₁ is disjoint from I₂.)
+  -- I₂ ⊆ P \ I₁ : I₂ ⊆ P (IIS) and I₂ ∩ I₁ = ∅ (disjoint).
+  have hI₂_sub : I₂ ⊆ P \ I₁ := by
+    intro c hc
+    refine Finset.mem_sdiff.mpr ⟨hI₂.subset hc, ?_⟩
+    intro hcI₁
+    exact (Finset.disjoint_left.mp hDisj) hcI₁ hc
+  -- If P \ I₁ were feasible, I₂ would inherit feasibility — contradicting
+  -- the fact that I₂ is an IIS (hence infeasible).
+  intro hFeas
+  exact hI₂.infeasible (feasible_of_subset hI₂_sub hFeas)
+
 --------------------------------------------------------------------------------
 -- 5. Counterfactual Denotation                                    (paper §5.2)
 --------------------------------------------------------------------------------
@@ -437,9 +483,13 @@ theorem counterfactual_nonempty (P : Program) (hWF : WF.Nonempty) :
     removes from `layout.constraints` before solving the geometry
     (see `layoutinstance.ts:1424-1425`).
 
-    The paper (§5.2 line 1353) describes the same idea constraint-level:
-    "relaxing all solver-level inequalities in the IIS". Either way, the
-    diagram is rendered from `P \ droppedConstraints P M = M`. -/
+    *Asymmetry from the paper's IIS approach.* Paper §5.2 line 1353
+    relaxes a single IIS `I` and renders from `P \ I`. **This is not
+    the same as MFS-removal**: `P \ I` is not in general feasible, since
+    other IISes in `P` (disjoint from `I` or overlapping but distinct)
+    may persist (see `iis_removal_can_remain_infeasible` below).
+    MFS-removal is strictly stronger — it yields `M`, which is feasible
+    by definition. -/
 def droppedConstraints (P M : Program) : Program := P \ M
 
 /-- **Nothing is dropped iff the program is feasible.** A clean
@@ -512,9 +562,11 @@ example (X : Selector₂) (hNE : X.Nonempty) (hWF : WF.Nonempty) :
 #check mfs_self_of_feasible                    -- Feasible P ⇒ P is an MFS
 #check mfs_unique_of_feasible                  -- Feasible P ⇒ P is THE MFS
 
--- Duality — the bridge
+-- Duality & the MFS/IIS asymmetry
 #check mfs_hits_every_iis                      -- MFS-complement hits every IIS
 #check iis_complement_is_hitting_set           -- restated: I ∩ (P\M) is nonempty
+#check mfs_kept_is_feasible                    -- MFS-keeping always yields feasibility
+#check iis_removal_can_remain_infeasible       -- IIS-removal does NOT, in general
 
 -- Counterfactual semantics — paper §5.2
 #check counterfactual                          -- ⟦P⟧₊
