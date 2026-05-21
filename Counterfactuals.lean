@@ -34,9 +34,18 @@ Concretely:
                               (the conflict explanation)
   ```
 
-The two are linked by the **duality theorem** `mfs_hits_every_iis`:
-every constraint dropped from the diagram (i.e., in the MFS-complement)
-also features in the report (i.e., belongs to some IIS).
+The two are linked by **two dual theorems**:
+
+* `mfs_hits_every_iis` — every IIS in the report contains at least one
+  constraint dropped by the diagram (i.e., the MFS-complement is a
+  hitting set for the report).
+* `dropped_belongs_to_some_iis` — conversely, every constraint dropped
+  by the diagram features in some IIS of the report.
+
+So the drop-set and the report cover each other in both directions:
+no dropped constraint is "spurious" (every drop has a justifying
+conflict), and no IIS escapes the drop-set (every conflict has a
+witnessing drop).
 
 ## Why this file exists
 
@@ -372,6 +381,44 @@ theorem iis_complement_is_hitting_set {P M I : Program}
   obtain ⟨c, hcI, hcM⟩ := mfs_hits_every_iis hMFS hIIS
   exact ⟨c, Finset.mem_inter.mpr ⟨hcI, Finset.mem_sdiff.mpr ⟨hIIS.subset hcI, hcM⟩⟩⟩
 
+/-- **Converse direction of duality.** Every constraint *dropped* by the
+    diagram (i.e., in `P \ M` for an MFS `M`) belongs to some IIS of `P`.
+
+    *Why this is non-trivial.* `mfs_hits_every_iis` goes the other way —
+    it picks a witness *given* an IIS. This theorem goes from a dropped
+    constraint to an IIS containing it. The proof uses MFS-maximality:
+    if `c` is dropped, then `insert c M` is infeasible (else `c` could
+    have been added to the MFS, contradicting maximality), so some IIS
+    lives inside `insert c M`, and that IIS must contain `c` (otherwise
+    it would be a subset of the feasible `M`).
+
+    Together with `mfs_hits_every_iis`, this proves that the drop-set
+    and the IIS family **cover each other**: every drop has a
+    justifying conflict, and every conflict has a witnessing drop. -/
+theorem dropped_belongs_to_some_iis {P M : Program} (hMFS : IsMFS P M)
+    {c : QualifiedConstraint} (hc : c ∈ P \ M) :
+    ∃ I, IsIIS P I ∧ c ∈ I := by
+  rw [Finset.mem_sdiff] at hc
+  obtain ⟨hcP, hcM⟩ := hc
+  -- insert c M is infeasible by MFS-maximality.
+  have hInfeas : ¬ Feasible (insert c M) := hMFS.maximal c hcP hcM
+  -- insert c M ⊆ P (since c ∈ P and M ⊆ P).
+  have hSub : insert c M ⊆ P :=
+    Finset.insert_subset_iff.mpr ⟨hcP, hMFS.subset⟩
+  -- Get an IIS contained in insert c M (and hence in P).
+  obtain ⟨I, hIIS, hI_sub⟩ :=
+    iis_subset_of_infeasible P (insert c M) hSub hInfeas
+  refine ⟨I, hIIS, ?_⟩
+  -- c ∈ I, because otherwise I ⊆ M, which is feasible — contradicting
+  -- I's infeasibility as an IIS.
+  by_contra hcI
+  have hI_in_M : I ⊆ M := by
+    intro d hd
+    rcases Finset.mem_insert.mp (hI_sub hd) with hEq | hMem
+    · exact absurd (hEq ▸ hd) hcI
+    · exact hMem
+  exact hIIS.infeasible (feasible_of_subset hI_in_M hMFS.feasible)
+
 /-- **MFS-keeping yields feasibility by definition** — trivial restatement,
     but stated explicitly to make the contrast with IIS-removal sharp.
     The MFS `M` *is* the rendered program; it is feasible by `IsMFS.feasible`. -/
@@ -670,8 +717,9 @@ example (X : Selector₂) (hNE : X.Nonempty) (hWF : WF.Nonempty) :
 #check mfs_unique_of_feasible                  -- Feasible P ⇒ P is THE MFS
 
 -- Duality & MFS/IIS asymmetry
-#check mfs_hits_every_iis                      -- MFS-complement hits every IIS
+#check mfs_hits_every_iis                      -- ∀ IIS, ∃ dropped constraint in it
 #check iis_complement_is_hitting_set           -- restated: I ∩ (P\M) is nonempty
+#check dropped_belongs_to_some_iis             -- ∀ dropped constraint, ∃ IIS containing it
 #check mfs_kept_is_feasible                    -- MFS-keeping always yields feasibility
 #check iis_removal_can_remain_infeasible       -- IIS-removal does NOT, in general
 
