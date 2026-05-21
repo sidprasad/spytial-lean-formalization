@@ -10,6 +10,9 @@ lean_lib AbstractSolver
 
 lean_lib ModalQuery
 
+@[default_target]
+lean_lib Counterfactuals
+
 require mathlib from
   git "https://github.com/leanprover-community/mathlib4" @ "master"
 
