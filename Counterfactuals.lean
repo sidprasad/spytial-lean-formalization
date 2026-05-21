@@ -28,7 +28,7 @@ line 450-452; abstract line 297). This file formalizes:
 |-------------------------------|------------------------------------|----------------------------------------|----------------------------------------------------------------------|
 | Feasibility                   | §4.4 "denotation nonempty"         | `Feasible P`                           | `(denotes M).Nonempty` check in validators                           |
 | Irreducible Infeasible Subsys | §5.1 (line 1199)                   | `IsIIS P I`                            | `minimalConflictingSet` in `constraint-validator.ts`                 |
-| quasi-IIS (subset-minimal)    | §5.1 (line 1250)                   | `IsIIS` (same — minimality is the same definition) | iterative-deletion procedure (line 435+)                  |
+| quasi-IIS (subset-minimal)    | §5.1 (line 1250)                   | `IsIIS` (same — minimality is the same definition) | `getMinimalDisjunctiveConflict` in `constraint-validator.ts:1143` |
 | Maximal Feasible Subset       | §5.2 (dual, implicit)              | `IsMFS P M`                            | `computeMaximalFeasibleSubset` in `qualitative-constraint-validator.ts` |
 | Counterfactual diagram        | §5.2 "Layout level" (line 1353)    | `counterfactual P`  (notation `⟦P⟧₊`)  | `CounterfactualLayoutResult` in `layoutinstance.ts`                  |
 | Cut-out constraints           | §5.2 "relaxing inequalities"       | `droppedConstraints P M`               | `layout.constraints.filter(...)` in `layoutinstance.ts:1424`         |
@@ -81,6 +81,8 @@ namespace Counterfactual
     This is the positive dual of "unsatisfiable" as formalized in
     `Main.lean` via `unsat_iff_empty` (paper line 1164):
       `⟦P⟧ = ∅ ↔ ∀ R ∈ WF, ¬ modelsP R P`
+    (Lean's `modelsP` is the program-level lift of constraint satisfaction;
+    the paper writes this with `\modelsC` — same notion, different name.)
     Hence `Feasible P ↔ ¬ (⟦P⟧ = ∅) ↔ ∃ R ∈ WF, modelsP R P`. -/
 def Feasible (P : Program) : Prop := (denotes P).Nonempty
 
@@ -319,6 +321,17 @@ theorem mfs_hits_every_iis {P M I : Program}
   -- But I is an IIS, hence infeasible. Contradiction.
   exact hIIS.infeasible (feasible_of_subset hNo hMFS.feasible)
 
+/-- **Hitting-set corollary, restated.** The constraints *dropped* from
+    the diagram (`P \ M` for an MFS `M`) intersect every IIS — i.e., the
+    drop set is a hitting set for the IIS family. Direct restatement of
+    `mfs_hits_every_iis` in `droppedConstraints` form, useful when
+    reasoning about the rendering pipeline. -/
+theorem iis_complement_is_hitting_set {P M I : Program}
+    (hMFS : IsMFS P M) (hIIS : IsIIS P I) :
+    (I ∩ (P \ M)).Nonempty := by
+  obtain ⟨c, hcI, hcM⟩ := mfs_hits_every_iis hMFS hIIS
+  exact ⟨c, Finset.mem_inter.mpr ⟨hcI, Finset.mem_sdiff.mpr ⟨hIIS.subset hcI, hcM⟩⟩⟩
+
 --------------------------------------------------------------------------------
 -- 5. Counterfactual Denotation                                    (paper §5.2)
 --------------------------------------------------------------------------------
@@ -446,6 +459,39 @@ lemma dropped_empty_iff_feasible {P M : Program} (hMFS : IsMFS P M) :
     exact Finset.sdiff_self P
 
 --------------------------------------------------------------------------------
+-- Worked example: a concrete UNSAT program produces an IIS, an MFS, and
+-- a non-empty counterfactual.
+--------------------------------------------------------------------------------
+
+/-- **Concrete instance.** A 2-constraint program requiring the same
+    nonempty selector `X` to be both `left` and `right` is UNSAT
+    (Main.lean's `opposite_orientation_unsat`). Yet our counterfactual
+    semantics gives, for this `P`:
+
+    * a witness IIS (via `iis_exists_of_infeasible`),
+    * an MFS (via `mfs_exists`), and
+    * a non-empty diagram set `⟦P⟧₊` (via `counterfactual_nonempty`).
+
+    This exercises the full API end-to-end on a paper-known UNSAT
+    pattern (paper §5.2, "Reporting Unsatisfiable Diagrams"). -/
+example (X : Selector₂) (hNE : X.Nonempty) (hWF : WF.Nonempty) :
+    let P : Program := {⟨.orientation X .left, .always⟩,
+                        ⟨.orientation X .right, .always⟩}
+    (∃ I, IsIIS P I) ∧ (∃ M, IsMFS P M) ∧ (⟦P⟧₊).Nonempty := by
+  intro P
+  -- P is UNSAT by Main.lean's opposite_orientation_unsat.
+  have hL : (⟨.orientation X .left, .always⟩ : QualifiedConstraint) ∈ P :=
+    Finset.mem_insert_self _ _
+  have hR : (⟨.orientation X .right, .always⟩ : QualifiedConstraint) ∈ P :=
+    Finset.mem_insert_of_mem (Finset.mem_singleton.mpr rfl)
+  have hEmpty : denotes P = ∅ := opposite_orientation_unsat P X hL hR hNE
+  have hUnsat : ¬ Feasible P := by
+    unfold Feasible; rw [hEmpty]; exact Set.not_nonempty_empty
+  exact ⟨iis_exists_of_infeasible P hUnsat,
+         mfs_exists P hWF,
+         counterfactual_nonempty P hWF⟩
+
+--------------------------------------------------------------------------------
 -- Summary
 --------------------------------------------------------------------------------
 
@@ -468,6 +514,7 @@ lemma dropped_empty_iff_feasible {P M : Program} (hMFS : IsMFS P M) :
 
 -- Duality — the bridge
 #check mfs_hits_every_iis                      -- MFS-complement hits every IIS
+#check iis_complement_is_hitting_set           -- restated: I ∩ (P\M) is nonempty
 
 -- Counterfactual semantics — paper §5.2
 #check counterfactual                          -- ⟦P⟧₊

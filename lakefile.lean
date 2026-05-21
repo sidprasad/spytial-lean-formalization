@@ -10,6 +10,7 @@ lean_lib AbstractSolver
 
 lean_lib ModalQuery
 
+@[default_target]
 lean_lib Counterfactuals
 
 require mathlib from
