@@ -1,10 +1,51 @@
 /-
-# Counterfactuals.lean — Formalization of UNSAT-Diagram Semantics
+# Counterfactuals.lean — Diagram vs. Report Semantics for UNSAT Programs
 
 This file mechanizes the counterfactual layout semantics described in
 **§5 (Constraint (Dis)Satisfaction)** of the PLDI 2026 paper, together
 with the corresponding runtime in `spytial-core`. It extends `Main.lean`
 (which mechanizes §4 (Formalizing Spytial)).
+
+## The two outputs of counterfactual rendering
+
+When a program `P` is unsatisfiable, the runtime produces **two**
+distinct artifacts (paper §5.2, three-level reporting at lines 1351-1358):
+
+* The **diagram** — what the user sees rendered. This is the *layout
+  level* of paper §5.2. It is computed from a **Maximal Feasible
+  Subset (MFS)** of `P`: we keep the MFS, drop its complement, and
+  solve the resulting feasible system.
+
+* The **report** — what the user reads alongside the diagram, explaining
+  *why* constraints had to be dropped. This is the *Diagram Element*
+  and *Constraint* levels of paper §5.2 (line 1355-1358). It is
+  computed from the **Irreducible Infeasible Subsystems (IISes)** of
+  `P` — minimal contradictory cores.
+
+Concretely:
+
+  ```
+                ┌──────────── MFS-based ────────────┐
+   counterfactualDiagram P  : Set Realization     -- ⟦P⟧₊
+                              (the rendered geometry)
+
+                ┌──────────── IIS-based ────────────┐
+   counterfactualReport P   : Set Program
+                              (the conflict explanation)
+  ```
+
+The two are linked by **two dual theorems**:
+
+* `mfs_hits_every_iis` — every IIS in the report contains at least one
+  constraint dropped by the diagram (i.e., the MFS-complement is a
+  hitting set for the report).
+* `dropped_belongs_to_some_iis` — conversely, every constraint dropped
+  by the diagram features in some IIS of the report.
+
+So the drop-set and the report cover each other in both directions:
+no dropped constraint is "spurious" (every drop has a justifying
+conflict), and no IIS escapes the drop-set (every conflict has a
+witnessing drop).
 
 ## Why this file exists
 
@@ -12,27 +53,24 @@ with the corresponding runtime in `spytial-core`. It extends `Main.lean`
   `⟦P⟧ = ∅ ↔ ∀ R ∈ WF, ¬ modelsP R P`
 
 When `⟦P⟧ = ∅`, the user has given an over-constrained spec and there is
-*no* realization to draw. Yet **spytial-core still renders a diagram** —
-the counterfactual diagram (paper §5.2, line 1353; intro contribution
-line 450-452; abstract line 297). This file formalizes:
+*no* realization to draw. Yet spytial-core still renders both a diagram
+and a report. This file formalizes:
 
-  (1) what such a diagram is, semantically;
-  (2) which constraints it satisfies (the **MFS** — kept) and which it
-      drops (the **IIS** — dual hitting set);
-  (3) under what conditions a diagram exists, and what guarantees it
-      provides.
+  (1) what each artifact is, semantically;
+  (2) which constraints each is built from (MFS vs IIS);
+  (3) the conditions under which each exists, and their guarantees.
 
 ## Paper ↔ Lean ↔ spytial-core correspondence
 
-| Concept                       | Paper                              | Lean (this file)                       | spytial-core (TypeScript)                                            |
-|-------------------------------|------------------------------------|----------------------------------------|----------------------------------------------------------------------|
-| Feasibility                   | §4.4 "denotation nonempty"         | `Feasible P`                           | `(denotes M).Nonempty` check in validators                           |
-| Irreducible Infeasible Subsys | §5.1 (line 1199)                   | `IsIIS P I`                            | `minimalConflictingSet` in `constraint-validator.ts`                 |
-| quasi-IIS (subset-minimal)    | §5.1 (line 1250)                   | `IsIIS` (same — minimality is the same definition) | `getMinimalDisjunctiveConflict` in `constraint-validator.ts:1143` |
-| Maximal Feasible Subset       | §5.2 (dual, implicit)              | `IsMFS P M`                            | `computeMaximalFeasibleSubset` in `qualitative-constraint-validator.ts` |
-| Counterfactual diagram        | §5.2 "Layout level" (line 1353)    | `counterfactual P`  (notation `⟦P⟧₊`)  | `CounterfactualLayoutResult` in `layoutinstance.ts`                  |
-| Cut-out constraints           | §5.2 "relaxing inequalities"       | `droppedConstraints P M`               | `layout.constraints.filter(...)` in `layoutinstance.ts:1424`         |
-| Conflict overlay              | §5.2 "Diagram Element / Constraint levels" | (annotation; not modeled here) | `CounterfactualLayoutResult.conflictingConstraints`                  |
+| Concept                       | Paper                                | Lean (this file)                       | spytial-core (TypeScript)                                            |
+|-------------------------------|--------------------------------------|----------------------------------------|----------------------------------------------------------------------|
+| Feasibility                   | §4.4 "denotation nonempty"           | `Feasible P`                           | `(denotes M).Nonempty` check in validators                           |
+| Irreducible Infeasible Subsys | §5.1 (line 1199)                     | `IsIIS P I`                            | `minimalConflictingSet` in `constraint-validator.ts`                 |
+| quasi-IIS (subset-minimal)    | §5.1 (line 1250)                     | `IsIIS` (same — minimality is the same definition) | `getMinimalDisjunctiveConflict` in `constraint-validator.ts:1143` |
+| Maximal Feasible Subset       | §5.2 (dual, implicit)                | `IsMFS P M`                            | `computeMaximalFeasibleSubset` in `qualitative-constraint-validator.ts` |
+| **Counterfactual diagram**    | §5.2 "Layout level" (line 1353)      | `counterfactualDiagram P` (`⟦P⟧₊`)     | `CounterfactualLayoutResult` in `layoutinstance.ts`                  |
+| **Counterfactual report**     | §5.2 "Diagram Element / Constraint" (line 1355-1358) | `counterfactualReport P`               | `CounterfactualLayoutResult.conflictingConstraints`                  |
+| Cut-out constraints           | §5.2 "relaxing inequalities"         | `droppedConstraints P M`               | `layout.constraints.filter(...)` in `layoutinstance.ts:1424`         |
 
 ## A subtle point: IIS-relaxation (paper) vs MFS-keeping (spytial-core)
 
@@ -56,14 +94,19 @@ only the chosen one. The paper's strategy is therefore an *iterative*
 relaxation (one IIS at a time, until feasible), while spytial-core's
 qualitative validator computes the feasible target in one pass.
 
+This is precisely why the *diagram* (geometry source) is built from
+the MFS, while the *report* (explanation overlay) is built from the
+IIS family. They have different jobs.
+
 ## File outline
 
 1.  **Feasibility** (`Feasible`)                       — basic predicate.
 2.  **IIS** (`IsIIS`)                                  — paper §5.1.
 3.  **MFS** (`IsMFS`)                                  — dual of IIS.
 4.  **Duality** (`mfs_hits_every_iis`)                 — the bridge theorem.
-5.  **Counterfactual denotation** (`⟦P⟧₊`)             — paper §5.2 "Layout level".
-6.  **Cut-out set** (`droppedConstraints`)             — paper "relaxing".
+5.  **Diagram** (`counterfactualDiagram`, `⟦P⟧₊`)      — MFS-based; paper §5.2 "Layout level".
+6.  **Report** (`counterfactualReport`)                — IIS-family-based; paper §5.2 "Diagram Element / Constraint levels".
+7.  **Cut-out set** (`droppedConstraints`)             — paper "relaxing".
 
 Extends `Main.lean`.
 -/
@@ -338,6 +381,44 @@ theorem iis_complement_is_hitting_set {P M I : Program}
   obtain ⟨c, hcI, hcM⟩ := mfs_hits_every_iis hMFS hIIS
   exact ⟨c, Finset.mem_inter.mpr ⟨hcI, Finset.mem_sdiff.mpr ⟨hIIS.subset hcI, hcM⟩⟩⟩
 
+/-- **Converse direction of duality.** Every constraint *dropped* by the
+    diagram (i.e., in `P \ M` for an MFS `M`) belongs to some IIS of `P`.
+
+    *Why this is non-trivial.* `mfs_hits_every_iis` goes the other way —
+    it picks a witness *given* an IIS. This theorem goes from a dropped
+    constraint to an IIS containing it. The proof uses MFS-maximality:
+    if `c` is dropped, then `insert c M` is infeasible (else `c` could
+    have been added to the MFS, contradicting maximality), so some IIS
+    lives inside `insert c M`, and that IIS must contain `c` (otherwise
+    it would be a subset of the feasible `M`).
+
+    Together with `mfs_hits_every_iis`, this proves that the drop-set
+    and the IIS family **cover each other**: every drop has a
+    justifying conflict, and every conflict has a witnessing drop. -/
+theorem dropped_belongs_to_some_iis {P M : Program} (hMFS : IsMFS P M)
+    {c : QualifiedConstraint} (hc : c ∈ P \ M) :
+    ∃ I, IsIIS P I ∧ c ∈ I := by
+  rw [Finset.mem_sdiff] at hc
+  obtain ⟨hcP, hcM⟩ := hc
+  -- insert c M is infeasible by MFS-maximality.
+  have hInfeas : ¬ Feasible (insert c M) := hMFS.maximal c hcP hcM
+  -- insert c M ⊆ P (since c ∈ P and M ⊆ P).
+  have hSub : insert c M ⊆ P :=
+    Finset.insert_subset_iff.mpr ⟨hcP, hMFS.subset⟩
+  -- Get an IIS contained in insert c M (and hence in P).
+  obtain ⟨I, hIIS, hI_sub⟩ :=
+    iis_subset_of_infeasible P (insert c M) hSub hInfeas
+  refine ⟨I, hIIS, ?_⟩
+  -- c ∈ I, because otherwise I ⊆ M, which is feasible — contradicting
+  -- I's infeasibility as an IIS.
+  by_contra hcI
+  have hI_in_M : I ⊆ M := by
+    intro d hd
+    rcases Finset.mem_insert.mp (hI_sub hd) with hEq | hMem
+    · exact absurd (hEq ▸ hd) hcI
+    · exact hMem
+  exact hIIS.infeasible (feasible_of_subset hI_in_M hMFS.feasible)
+
 /-- **MFS-keeping yields feasibility by definition** — trivial restatement,
     but stated explicitly to make the contrast with IIS-removal sharp.
     The MFS `M` *is* the rendered program; it is feasible by `IsMFS.feasible`. -/
@@ -379,44 +460,41 @@ theorem iis_removal_can_remain_infeasible {P I₁ I₂ : Program}
   exact hI₂.infeasible (feasible_of_subset hI₂_sub hFeas)
 
 --------------------------------------------------------------------------------
--- 5. Counterfactual Denotation                                    (paper §5.2)
+-- 5. Counterfactual Diagram (MFS-based geometry)                  (paper §5.2)
 --------------------------------------------------------------------------------
 
-/-- The **counterfactual denotation** of `P` is the union of denotations
-    of all its MFSes.
-
-    Paper §5.2 (line 1353) calls this the *layout-level* counterfactual:
-    > "Produce a counterfactual diagram by relaxing all solver-level
-    >  inequalities in the IIS, and highlighting the boxes corresponding
-    >  to variables involved."
+/-- The **counterfactual diagram** of `P` is the union of denotations of
+    all its MFSes. This is the **layout-level** output (paper §5.2 line
+    1353): the *rendered geometry* that the user sees.
 
     Two behaviours follow:
     * **SAT case** — `P` feasible: `⟦P⟧₊ = ⟦P⟧` (Theorem
-      `counterfactual_eq_denotes_of_feasible`). Nothing is dropped; the
-      user's spec is rendered verbatim.
+      `counterfactualDiagram_eq_denotes_of_feasible`). Nothing is dropped;
+      the user's spec is rendered verbatim.
     * **UNSAT case** — `P` infeasible: `⟦P⟧₊` collects realizations of
       every maximally-satisfiable fragment. The diagram realizes *some*
-      MFS, with the complement annotated as "cut out".
+      MFS, with the complement annotated (via `counterfactualReport`) as
+      "cut out".
 
     The set is *always inhabited* when `WF.Nonempty` (Theorem
-    `counterfactual_nonempty`). This formalizes the design goal articulated
-    in paper §5.2 line 1286-1287:
+    `counterfactualDiagram_nonempty`). This formalizes the design goal
+    articulated in paper §5.2 line 1286-1287:
     > "Users need to know *when* and *why* a conflict occurs, but a
     >  partial visualization is often more informative than just a
     >  textual report of conflicting constraints." -/
-def counterfactual (P : Program) : Set Realization :=
+def counterfactualDiagram (P : Program) : Set Realization :=
   { R | ∃ M, IsMFS P M ∧ R ∈ denotes M }
 
-@[inherit_doc] notation "⟦" P "⟧₊" => counterfactual P
+@[inherit_doc] notation "⟦" P "⟧₊" => counterfactualDiagram P
 
-@[simp] lemma mem_counterfactual {P : Program} {R : Realization} :
+@[simp] lemma mem_counterfactualDiagram {P : Program} {R : Realization} :
     R ∈ ⟦P⟧₊ ↔ ∃ M, IsMFS P M ∧ R ∈ denotes M := Iff.rfl
 
-/-- Equivalent presentation as a set-theoretic union over the family of
-    MFSes. Useful for relating to spytial-core's pipeline, which
-    materializes a *specific* MFS rather than the union — but the union
-    is the right *semantic* object. -/
-lemma counterfactual_eq_iUnion (P : Program) :
+/-- Equivalent presentation of the diagram as a set-theoretic union over
+    the family of MFSes. Useful for relating to spytial-core's pipeline,
+    which materializes a *specific* MFS rather than the union — but the
+    union is the right *semantic* object. -/
+lemma counterfactualDiagram_eq_iUnion (P : Program) :
     ⟦P⟧₊ = ⋃ M ∈ {M : Program | IsMFS P M}, denotes M := by
   ext R
   constructor
@@ -428,28 +506,28 @@ lemma counterfactual_eq_iUnion (P : Program) :
     obtain ⟨hMFS, hRM⟩ := Set.mem_iUnion.mp hR'
     exact ⟨M, hMFS, hRM⟩
 
-/-- **Well-formedness.** Every counterfactual realization is well-formed
+/-- **Well-formedness.** Every realization in the diagram is well-formed
     in the sense of `Main.lean`'s `WF` (paper §4.4, line 1162). This
     rules out degenerate "diagrams" with overlapping or zero-area boxes
     sneaking in through MFS relaxation. -/
-theorem counterfactual_sub_WF (P : Program) : ⟦P⟧₊ ⊆ WF := by
+theorem counterfactualDiagram_sub_WF (P : Program) : ⟦P⟧₊ ⊆ WF := by
   rintro R ⟨M, _, hRM⟩
   exact denotes_sub_WF M hRM
 
-/-- **Soundness.** Every counterfactual realization satisfies *some* MFS
-    of `P`. Spytial-core never shows a diagram that fails to realize a
-    maximally feasible fragment of the user's spec — there is always a
-    coherent constraint subset behind the rendered diagram. -/
-theorem counterfactual_witnesses_MFS {P : Program} {R : Realization}
+/-- **Soundness.** Every diagram realization satisfies *some* MFS of `P`.
+    Spytial-core never shows a diagram that fails to realize a maximally
+    feasible fragment of the user's spec — there is always a coherent
+    constraint subset behind the rendered diagram. -/
+theorem counterfactualDiagram_witnesses_MFS {P : Program} {R : Realization}
     (hR : R ∈ ⟦P⟧₊) : ∃ M, IsMFS P M ∧ R ∈ denotes M := hR
 
-/-- **Fidelity (SAT case).** When `P` is feasible, the counterfactual
-    denotation coincides with the standard denotation: spytial-core
-    draws exactly the user's spec, with nothing cut out.
+/-- **Fidelity (SAT case).** When `P` is feasible, the diagram coincides
+    with the standard denotation: spytial-core draws exactly the user's
+    spec, with nothing cut out.
 
     Paper §5.2 contrast: this is the "happy path" where the system does
     *not* need to take the best-effort/relaxation route. -/
-theorem counterfactual_eq_denotes_of_feasible {P : Program}
+theorem counterfactualDiagram_eq_denotes_of_feasible {P : Program}
     (hSat : Feasible P) : ⟦P⟧₊ = denotes P := by
   ext R
   refine ⟨?_, ?_⟩
@@ -459,8 +537,8 @@ theorem counterfactual_eq_denotes_of_feasible {P : Program}
   · intro hR
     exact ⟨P, mfs_self_of_feasible hSat, hR⟩
 
-/-- **Totality (UNSAT case).** Even when `P` is unsatisfiable, the
-    counterfactual denotation is inhabited (provided `WF.Nonempty`).
+/-- **Totality (UNSAT case).** Even when `P` is unsatisfiable, the diagram
+    is inhabited (provided `WF.Nonempty`).
 
     *Why this matters.* This is the formal counterpart of the paper's
     central design claim (§5.2 line 1286-1287): the system can *always*
@@ -468,14 +546,82 @@ theorem counterfactual_eq_denotes_of_feasible {P : Program}
     function from programs to drawings, in contrast to the
     "reject unsatisfiable layouts" strategy (§5.2 line 1276-1280)
     which is partial. -/
-theorem counterfactual_nonempty (P : Program) (hWF : WF.Nonempty) :
+theorem counterfactualDiagram_nonempty (P : Program) (hWF : WF.Nonempty) :
     (⟦P⟧₊).Nonempty := by
   obtain ⟨M, hMFS⟩ := mfs_exists P hWF
   obtain ⟨R, hRM⟩ := hMFS.feasible
   exact ⟨R, M, hMFS, hRM⟩
 
 --------------------------------------------------------------------------------
--- 6. The "Cut Out" Set                                  (paper §5.2 "relaxing")
+-- 6. Counterfactual Report (IIS-family-based explanation)         (paper §5.2)
+--------------------------------------------------------------------------------
+
+/-- The **counterfactual report** of `P` is the family of all its IISes.
+    This is the **explanation overlay** the user reads alongside the
+    diagram — paper §5.2's *Diagram Element* and *Constraint* levels
+    (lines 1355-1358):
+
+    > "Diagram Element level: Express the conflict textually as concrete
+    >  relations between atoms related to the variables involved in the IIS.
+    >  Constraint level: Report the constraints behind the conflicting
+    >  diagram-element relations."
+
+    In `spytial-core`, this corresponds to the
+    `conflictingConstraints` field on `CounterfactualLayoutResult`.
+
+    Two behaviours follow:
+    * **SAT case** — `P` feasible: the report is empty (nothing to
+      explain). Theorem `counterfactualReport_empty_iff_feasible`.
+    * **UNSAT case** — `P` infeasible: the report contains every
+      minimal contradictory core in `P`. -/
+def counterfactualReport (P : Program) : Set Program :=
+  { I | IsIIS P I }
+
+@[simp] lemma mem_counterfactualReport {P I : Program} :
+    I ∈ counterfactualReport P ↔ IsIIS P I := Iff.rfl
+
+/-- **Report is empty iff the program is feasible.** This is the IIS-side
+    analogue of `counterfactualDiagram_eq_denotes_of_feasible`: when the
+    spec is fine, there's nothing to report. -/
+theorem counterfactualReport_empty_iff_feasible (P : Program) :
+    counterfactualReport P = ∅ ↔ Feasible P := by
+  constructor
+  · intro hEmpty
+    by_contra hUnsat
+    obtain ⟨I, hI⟩ := iis_exists_of_infeasible P hUnsat
+    have : I ∈ counterfactualReport P := hI
+    rw [hEmpty] at this
+    exact absurd this (Set.notMem_empty I)
+  · intro hSat
+    rw [Set.eq_empty_iff_forall_notMem]
+    intro I hI
+    exact no_iis_of_feasible hSat ⟨I, hI⟩
+
+/-- **Report is nonempty iff the program is unsatisfiable.** Direct
+    reformulation of `counterfactualReport_empty_iff_feasible`. -/
+theorem counterfactualReport_nonempty_iff_unsat (P : Program) :
+    (counterfactualReport P).Nonempty ↔ ¬ Feasible P := by
+  rw [Set.nonempty_iff_ne_empty]
+  constructor
+  · intro hNe hFeas
+    exact hNe ((counterfactualReport_empty_iff_feasible P).mpr hFeas)
+  · intro hUnsat hEmpty
+    exact hUnsat ((counterfactualReport_empty_iff_feasible P).mp hEmpty)
+
+/-- **Restatement of duality, joint form.** For any MFS `M` and any IIS
+    `I` in the report, the diagram's drop-set `P \ M` intersects `I`.
+    Every constraint in the conflict explanation is also a candidate
+    for the cut. This connects the diagram (MFS) and the report (IIS)
+    via the bridge theorem `mfs_hits_every_iis`. -/
+theorem diagram_drop_meets_every_report_entry
+    {P M I : Program} (hMFS : IsMFS P M) (hI : I ∈ counterfactualReport P) :
+    ((P \ M) ∩ I).Nonempty := by
+  obtain ⟨c, hcI, hcM⟩ := mfs_hits_every_iis hMFS hI
+  exact ⟨c, Finset.mem_inter.mpr
+    ⟨Finset.mem_sdiff.mpr ⟨hI.subset hcI, hcM⟩, hcI⟩⟩
+
+--------------------------------------------------------------------------------
+-- 7. The "Cut Out" Set                                  (paper §5.2 "relaxing")
 --------------------------------------------------------------------------------
 
 /-- The constraints **dropped** from the rendered diagram: `P` minus the
@@ -487,14 +633,18 @@ theorem counterfactual_nonempty (P : Program) (hWF : WF.Nonempty) :
     relaxes a single IIS `I` and renders from `P \ I`. **This is not
     the same as MFS-removal**: `P \ I` is not in general feasible, since
     other IISes in `P` (disjoint from `I` or overlapping but distinct)
-    may persist (see `iis_removal_can_remain_infeasible` below).
+    may persist (see `iis_removal_can_remain_infeasible` above).
     MFS-removal is strictly stronger — it yields `M`, which is feasible
-    by definition. -/
+    by definition.
+
+    The drop-set is what the diagram throws away; the *report* (above)
+    tells the user *why* via the IIS family. -/
 def droppedConstraints (P M : Program) : Program := P \ M
 
 /-- **Nothing is dropped iff the program is feasible.** A clean
     correspondence between syntax (the drop set) and semantics
-    (feasibility of the spec). -/
+    (feasibility of the spec). Mirrors `counterfactualReport_empty_iff_feasible`
+    on the diagram side. -/
 lemma dropped_empty_iff_feasible {P M : Program} (hMFS : IsMFS P M) :
     droppedConstraints P M = ∅ ↔ Feasible P := by
   unfold droppedConstraints
@@ -509,25 +659,29 @@ lemma dropped_empty_iff_feasible {P M : Program} (hMFS : IsMFS P M) :
     exact Finset.sdiff_self P
 
 --------------------------------------------------------------------------------
--- Worked example: a concrete UNSAT program produces an IIS, an MFS, and
--- a non-empty counterfactual.
+-- Worked example: a concrete UNSAT program produces an IIS, an MFS, a
+-- non-empty diagram, AND a non-empty report.
 --------------------------------------------------------------------------------
 
 /-- **Concrete instance.** A 2-constraint program requiring the same
     nonempty selector `X` to be both `left` and `right` is UNSAT
-    (Main.lean's `opposite_orientation_unsat`). Yet our counterfactual
-    semantics gives, for this `P`:
+    (Main.lean's `opposite_orientation_unsat`). Our semantics gives,
+    for this `P`:
 
-    * a witness IIS (via `iis_exists_of_infeasible`),
-    * an MFS (via `mfs_exists`), and
-    * a non-empty diagram set `⟦P⟧₊` (via `counterfactual_nonempty`).
+    * a witness IIS, equivalently a non-empty report
+      (`iis_exists_of_infeasible` / `counterfactualReport_nonempty_iff_unsat`),
+    * an MFS (`mfs_exists`), and
+    * a non-empty diagram set `⟦P⟧₊` (`counterfactualDiagram_nonempty`).
 
-    This exercises the full API end-to-end on a paper-known UNSAT
-    pattern (paper §5.2, "Reporting Unsatisfiable Diagrams"). -/
+    This exercises the full diagram + report API end-to-end on a
+    paper-known UNSAT pattern (paper §5.2, "Reporting Unsatisfiable
+    Diagrams"). -/
 example (X : Selector₂) (hNE : X.Nonempty) (hWF : WF.Nonempty) :
     let P : Program := {⟨.orientation X .left, .always⟩,
                         ⟨.orientation X .right, .always⟩}
-    (∃ I, IsIIS P I) ∧ (∃ M, IsMFS P M) ∧ (⟦P⟧₊).Nonempty := by
+    (counterfactualReport P).Nonempty ∧
+    (∃ M, IsMFS P M) ∧
+    (⟦P⟧₊).Nonempty := by
   intro P
   -- P is UNSAT by Main.lean's opposite_orientation_unsat.
   have hL : (⟨.orientation X .left, .always⟩ : QualifiedConstraint) ∈ P :=
@@ -537,9 +691,9 @@ example (X : Selector₂) (hNE : X.Nonempty) (hWF : WF.Nonempty) :
   have hEmpty : denotes P = ∅ := opposite_orientation_unsat P X hL hR hNE
   have hUnsat : ¬ Feasible P := by
     unfold Feasible; rw [hEmpty]; exact Set.not_nonempty_empty
-  exact ⟨iis_exists_of_infeasible P hUnsat,
+  exact ⟨(counterfactualReport_nonempty_iff_unsat P).mpr hUnsat,
          mfs_exists P hWF,
-         counterfactual_nonempty P hWF⟩
+         counterfactualDiagram_nonempty P hWF⟩
 
 --------------------------------------------------------------------------------
 -- Summary
@@ -562,18 +716,25 @@ example (X : Selector₂) (hNE : X.Nonempty) (hWF : WF.Nonempty) :
 #check mfs_self_of_feasible                    -- Feasible P ⇒ P is an MFS
 #check mfs_unique_of_feasible                  -- Feasible P ⇒ P is THE MFS
 
--- Duality & the MFS/IIS asymmetry
-#check mfs_hits_every_iis                      -- MFS-complement hits every IIS
+-- Duality & MFS/IIS asymmetry
+#check mfs_hits_every_iis                      -- ∀ IIS, ∃ dropped constraint in it
 #check iis_complement_is_hitting_set           -- restated: I ∩ (P\M) is nonempty
+#check dropped_belongs_to_some_iis             -- ∀ dropped constraint, ∃ IIS containing it
 #check mfs_kept_is_feasible                    -- MFS-keeping always yields feasibility
 #check iis_removal_can_remain_infeasible       -- IIS-removal does NOT, in general
 
--- Counterfactual semantics — paper §5.2
-#check counterfactual                          -- ⟦P⟧₊
-#check counterfactual_sub_WF                   -- ⟦P⟧₊ ⊆ WF
-#check counterfactual_witnesses_MFS            -- soundness
-#check counterfactual_eq_denotes_of_feasible   -- SAT: ⟦P⟧₊ = ⟦P⟧
-#check counterfactual_nonempty                 -- UNSAT: still inhabited (totality)
+-- Diagram — paper §5.2 "Layout level" (MFS-based)
+#check counterfactualDiagram                   -- ⟦P⟧₊
+#check counterfactualDiagram_sub_WF            -- ⟦P⟧₊ ⊆ WF
+#check counterfactualDiagram_witnesses_MFS     -- soundness
+#check counterfactualDiagram_eq_denotes_of_feasible  -- SAT: ⟦P⟧₊ = ⟦P⟧
+#check counterfactualDiagram_nonempty          -- UNSAT: still inhabited (totality)
+
+-- Report — paper §5.2 "Diagram Element / Constraint levels" (IIS-based)
+#check counterfactualReport                    -- { I | IsIIS P I }
+#check counterfactualReport_empty_iff_feasible  -- SAT: report empty
+#check counterfactualReport_nonempty_iff_unsat  -- UNSAT: report nonempty
+#check diagram_drop_meets_every_report_entry   -- diagram drop hits every report entry
 
 -- Cut-out set
 #check droppedConstraints                      -- P \ M
