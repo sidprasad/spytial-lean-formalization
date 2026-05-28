@@ -136,7 +136,7 @@ noncomputable def translate_group₂ (dims : DimCtx) (X : Selector₂) (gids : A
 
 /-- Translate a size constraint: dimensions are baked into DimCtx, no positioning
     constraints emitted. -/
-def translate_size (_w _h : ℚ) (_S : Selector₁) : List LinearIneq := []
+def translate_size (_w _h : PosRat) (_S : Selector₁) : List LinearIneq := []
 
 /-- Translate a hideatom constraint: hidden atoms are removed, no constraints. -/
 def translate_hide (_S : Selector₁) : List LinearIneq := []
@@ -187,13 +187,13 @@ def translate_cyclic_path_at_k (dims : DimCtx) (L : List Atom) (k : Nat)
 /-- Reconstruct a `Realization` from a solver assignment. -/
 def reconstruct (σ : Assignment) (dims : DimCtx) (atoms : Finset Atom) : Realization :=
   fun a => if a ∈ atoms then
-    some ⟨σ (.x a), σ (.y a), dims.width a, dims.height a⟩
+    some ⟨σ (.x a), σ (.y a), dims.width a, dims.height a, dims.width_pos a, dims.height_pos a⟩
   else none
 
 lemma reconstruct_some (σ : Assignment) (dims : DimCtx) (atoms : Finset Atom)
     (a : Atom) (ha : a ∈ atoms) :
     reconstruct σ dims atoms a =
-      some ⟨σ (.x a), σ (.y a), dims.width a, dims.height a⟩ := by
+      some ⟨σ (.x a), σ (.y a), dims.width a, dims.height a, dims.width_pos a, dims.height_pos a⟩ := by
   simp [reconstruct, ha]
 
 lemma reconstruct_none (σ : Assignment) (dims : DimCtx) (atoms : Finset Atom)
@@ -213,8 +213,8 @@ theorem orientation_right_sound_strict
   intro a b hab
   have ha := (h_atoms ⟨a, b⟩ hab).1
   have hb := (h_atoms ⟨a, b⟩ hab).2
-  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a⟩,
-          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b⟩,
+  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a, dims.width_pos a, dims.height_pos a⟩,
+          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b, dims.width_pos b, dims.height_pos b⟩,
           reconstruct_some σ dims atoms a ha,
           reconstruct_some σ dims atoms b hb, ?_⟩
   simp only [leftOf]
@@ -232,8 +232,8 @@ theorem orientation_left_sound_strict
   intro a b hab
   have ha := (h_atoms ⟨a, b⟩ hab).1
   have hb := (h_atoms ⟨a, b⟩ hab).2
-  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a⟩,
-          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b⟩,
+  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a, dims.width_pos a, dims.height_pos a⟩,
+          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b, dims.width_pos b, dims.height_pos b⟩,
           reconstruct_some σ dims atoms a ha,
           reconstruct_some σ dims atoms b hb, ?_⟩
   simp only [leftOf]
@@ -251,8 +251,8 @@ theorem orientation_below_sound_strict
   intro a b hab
   have ha := (h_atoms ⟨a, b⟩ hab).1
   have hb := (h_atoms ⟨a, b⟩ hab).2
-  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a⟩,
-          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b⟩,
+  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a, dims.width_pos a, dims.height_pos a⟩,
+          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b, dims.width_pos b, dims.height_pos b⟩,
           reconstruct_some σ dims atoms a ha,
           reconstruct_some σ dims atoms b hb, ?_⟩
   simp only [above]
@@ -270,8 +270,8 @@ theorem orientation_above_sound_strict
   intro a b hab
   have ha := (h_atoms ⟨a, b⟩ hab).1
   have hb := (h_atoms ⟨a, b⟩ hab).2
-  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a⟩,
-          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b⟩,
+  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a, dims.width_pos a, dims.height_pos a⟩,
+          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b, dims.width_pos b, dims.height_pos b⟩,
           reconstruct_some σ dims atoms a ha,
           reconstruct_some σ dims atoms b hb, ?_⟩
   simp only [above]
@@ -300,8 +300,8 @@ theorem orientation_directlyRight_sound_strict
   intro a b hab
   have ha := (h_atoms ⟨a, b⟩ hab).1
   have hb := (h_atoms ⟨a, b⟩ hab).2
-  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a⟩,
-          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b⟩,
+  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a, dims.width_pos a, dims.height_pos a⟩,
+          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b, dims.width_pos b, dims.height_pos b⟩,
           reconstruct_some σ dims atoms a ha,
           reconstruct_some σ dims atoms b hb, ?_, ?_⟩
   · -- leftOf
@@ -328,8 +328,8 @@ theorem orientation_directlyLeft_sound_strict
   intro a b hab
   have ha := (h_atoms ⟨a, b⟩ hab).1
   have hb := (h_atoms ⟨a, b⟩ hab).2
-  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a⟩,
-          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b⟩,
+  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a, dims.width_pos a, dims.height_pos a⟩,
+          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b, dims.width_pos b, dims.height_pos b⟩,
           reconstruct_some σ dims atoms a ha,
           reconstruct_some σ dims atoms b hb, ?_, ?_⟩
   · -- leftOf b₂ b₁
@@ -356,8 +356,8 @@ theorem orientation_directlyBelow_sound_strict
   intro a b hab
   have ha := (h_atoms ⟨a, b⟩ hab).1
   have hb := (h_atoms ⟨a, b⟩ hab).2
-  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a⟩,
-          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b⟩,
+  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a, dims.width_pos a, dims.height_pos a⟩,
+          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b, dims.width_pos b, dims.height_pos b⟩,
           reconstruct_some σ dims atoms a ha,
           reconstruct_some σ dims atoms b hb, ?_, ?_⟩
   · -- above b₁ b₂
@@ -384,8 +384,8 @@ theorem orientation_directlyAbove_sound_strict
   intro a b hab
   have ha := (h_atoms ⟨a, b⟩ hab).1
   have hb := (h_atoms ⟨a, b⟩ hab).2
-  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a⟩,
-          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b⟩,
+  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a, dims.width_pos a, dims.height_pos a⟩,
+          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b, dims.width_pos b, dims.height_pos b⟩,
           reconstruct_some σ dims atoms a ha,
           reconstruct_some σ dims atoms b hb, ?_, ?_⟩
   · -- above b₂ b₁
@@ -415,8 +415,8 @@ theorem align_horizontal_sound
   intro a b hab
   have ha := (h_atoms ⟨a, b⟩ hab).1
   have hb := (h_atoms ⟨a, b⟩ hab).2
-  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a⟩,
-          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b⟩,
+  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a, dims.width_pos a, dims.height_pos a⟩,
+          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b, dims.width_pos b, dims.height_pos b⟩,
           reconstruct_some σ dims atoms a ha,
           reconstruct_some σ dims atoms b hb, ?_⟩
   simp only [aligned_h]
@@ -433,8 +433,8 @@ theorem align_vertical_sound
   intro a b hab
   have ha := (h_atoms ⟨a, b⟩ hab).1
   have hb := (h_atoms ⟨a, b⟩ hab).2
-  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a⟩,
-          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b⟩,
+  refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a, dims.width_pos a, dims.height_pos a⟩,
+          ⟨σ (.x b), σ (.y b), dims.width b, dims.height b, dims.width_pos b, dims.height_pos b⟩,
           reconstruct_some σ dims atoms a ha,
           reconstruct_some σ dims atoms b hb, ?_⟩
   simp only [aligned_v]
@@ -477,7 +477,7 @@ theorem group₁_sound
   · -- Reverse: a ∈ S → contained in boundary
     intro haS
     have ha := h_atoms_S a haS
-    refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a⟩,
+    refine ⟨⟨σ (.x a), σ (.y a), dims.width a, dims.height a, dims.width_pos a, dims.height_pos a⟩,
             reconstruct_some σ dims atoms a ha, ?_⟩
     simp only [contains]
     -- Extract the four inequality satisfactions for atom a
@@ -837,8 +837,8 @@ private theorem cyclic_pair_hrel_sound
   set aj := nth! L j hj
   have hai : ai = L[i]! := nth!_eq_getElem_bang L i hi
   have haj : aj = L[j]! := nth!_eq_getElem_bang L j hj
-  refine ⟨⟨σ (.x ai), σ (.y ai), dims.width ai, dims.height ai⟩,
-          ⟨σ (.x aj), σ (.y aj), dims.width aj, dims.height aj⟩,
+  refine ⟨⟨σ (.x ai), σ (.y ai), dims.width ai, dims.height ai, dims.width_pos ai, dims.height_pos ai⟩,
+          ⟨σ (.x aj), σ (.y aj), dims.width aj, dims.height aj, dims.width_pos aj, dims.height_pos aj⟩,
           reconstruct_some σ dims atoms ai h_ai,
           reconstruct_some σ dims atoms aj h_aj, ?_⟩
   obtain ⟨hcos_lt, hcos_eq, hcos_gt, _, _, _⟩ := h_oracle L.length i j k
@@ -886,8 +886,8 @@ private theorem cyclic_pair_vrel_sound
   set aj := nth! L j hj
   have hai : ai = L[i]! := nth!_eq_getElem_bang L i hi
   have haj : aj = L[j]! := nth!_eq_getElem_bang L j hj
-  refine ⟨⟨σ (.x ai), σ (.y ai), dims.width ai, dims.height ai⟩,
-          ⟨σ (.x aj), σ (.y aj), dims.width aj, dims.height aj⟩,
+  refine ⟨⟨σ (.x ai), σ (.y ai), dims.width ai, dims.height ai, dims.width_pos ai, dims.height_pos ai⟩,
+          ⟨σ (.x aj), σ (.y aj), dims.width aj, dims.height aj, dims.width_pos aj, dims.height_pos aj⟩,
           reconstruct_some σ dims atoms ai h_ai,
           reconstruct_some σ dims atoms aj h_aj, ?_⟩
   obtain ⟨_, _, _, hsin_lt, hsin_eq, hsin_gt⟩ := h_oracle L.length i j k

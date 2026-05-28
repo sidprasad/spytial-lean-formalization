@@ -25,12 +25,16 @@ namespace Spytial
 structure Atom where id : Nat
 deriving BEq, DecidableEq, Hashable
 
+/-- A Box has positive width and height by construction.
+    This guarantees the smallest size available to any Box is > 0. -/
 structure Box where
   x_tl : ℚ
   y_tl : ℚ
   width : ℚ
   height : ℚ
-deriving Repr, DecidableEq
+  width_pos : 0 < width
+  height_pos : 0 < height
+deriving Repr
 
 structure GroupBoundary where
   x_tl : ℚ
@@ -113,13 +117,17 @@ deriving Repr, DecidableEq
 
 
 
+/-- A strictly positive rational, used for size constraints to forbid
+    sizes ≤ 0 by construction. -/
+abbrev PosRat := {q : ℚ // 0 < q}
+
 inductive Constraint where
 | orientation : Selector₂ → Direction → Constraint
 | align       : Selector₂ → AlignDir  → Constraint
 | cyclic      : Selector₂ → Rotation  → Constraint
 | group₁      : Selector₁ → Constraint
 | group₂      : Selector₂ → (addEdge : Bool) → Constraint
-| size        : (w h : ℚ) → Selector₁ → Constraint
+| size        : (w h : PosRat) → Selector₁ → Constraint
 | hideatom    : Selector₁ → Constraint
 deriving DecidableEq
 
@@ -150,8 +158,8 @@ deriving DecidableEq
 --------------------------------------------------------------------------------
 
 
-def sat_size (R : Realization) (w h : ℚ) (S : Selector₁) : Prop :=
-  lift₁ R S (fun b => b.width = w ∧ b.height = h)
+def sat_size (R : Realization) (w h : PosRat) (S : Selector₁) : Prop :=
+  lift₁ R S (fun b => b.width = w.val ∧ b.height = h.val)
 
 def sat_hide (R : Realization) (S : Selector₁) : Prop :=
   ∀ a ∈ S, R a = none
