@@ -53,6 +53,13 @@ This Lean file (`Main.lean`) formalizes:
    - **Monotonicity**: Larger programs have smaller denotations (`P ⊆ Q ⟹ ⟦Q⟧ ⊆ ⟦P⟧`)
    - **Unsatisfiability**: A program is unsat iff its denotation is empty
 
+[`Counterfactuals.lean`](Counterfactuals.lean) describes the counterfactual diagram
+at the **diagram element level**. Orientation, alignment, and cyclic constraints give
+rise to relations between pairs of atoms. For example, `directlyRight` requires both
+a left/right order and horizontal alignment. When another constraint conflicts with
+the order, the counterfactual diagram can still satisfy the alignment. For a cyclic
+constraint, all pairwise relations for one rotation must hold together.
+
 ## Theorems You Can Check
 
 Open `Main.lean` in VS Code (with Lean 4 extension) and:

@@ -8,10 +8,12 @@ lean_lib Main
 
 lean_lib AbstractSolver
 
-lean_lib ModalQuery
-
 @[default_target]
 lean_lib Counterfactuals
+
+-- Open proof obligation (contains `sorry`). Not a default target:
+-- build explicitly with `lake build CyclicConjecture`.
+lean_lib CyclicConjecture
 
 require mathlib from
   git "https://github.com/leanprover-community/mathlib4" @ "master"
