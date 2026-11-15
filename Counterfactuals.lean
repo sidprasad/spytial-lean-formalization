@@ -98,6 +98,16 @@ This is precisely why the *diagram* (geometry source) is built from
 the MFS, while the *report* (explanation overlay) is built from the
 IIS family. They have different jobs.
 
+## The unit of the MFS: source constraint here, diagram element in the runtime
+
+`IsMFS` in this file keeps or drops a full **source constraint**.
+spytial-core keeps or drops **diagram-element relations** (one pair of
+nodes), so a part of one source constraint can stay while a different
+part is dropped. `DiagramMFS.lean` instantiates the theory of this file
+at that level (`IsDiagramMFS P D := IsMFS (atomize P) D`), proves that
+the greedy pass of the runtime gives such an MFS, and relates the two
+levels. All theorems of this file apply to the diagram level unchanged.
+
 ## File outline
 
 1.  **Feasibility** (`Feasible`)                       — basic predicate.

@@ -13,13 +13,16 @@ Or use `./check.sh` which does both.
 
 ## Structure
 
-- **Main.lean** — single-file mechanization containing all definitions and theorems
+- **Main.lean** — core mechanization: definitions and theorems (no `sorry`)
+- **Counterfactuals.lean** — MFS / IIS and UNSAT-diagram semantics (no `sorry`)
+- **DiagramMFS.lean** — the MFS at the diagram-element level, as `spytial-core` constructs it: pairwise relations are kept or dropped, so a part of one source constraint can stay (no `sorry`)
+- **CyclicConjecture.lean** — the one open proof (`cyclic_cw_ccw_unsat`, has a `sorry`). Not a default build target and nothing depends on it; build with `lake build CyclicConjecture`
 - **lakefile.lean** — Lake build config (depends on mathlib4, batteries)
 - **lean-toolchain** — pinned Lean version (v4.24.0)
 
 ## Key theorems
 
-All proofs are kernel-checked by `lake build` (except `cyclic_cw_ccw_unsat` which has a `sorry` for the geometric core):
+All proofs are kernel-checked by `lake build`. The default targets contain no `sorry`:
 
 **Algebraic structure:**
 - `antimonotonicity` — P ⊆ Q → ⟦Q⟧ ⊆ ⟦P⟧ (contravariant denotation)
@@ -45,6 +48,15 @@ All proofs are kernel-checked by `lake build` (except `cyclic_cw_ccw_unsat` whic
 **Constraint contradictions:**
 - `opposite_orientation_unsat` — left + right = ∅
 - `opposite_vertical_unsat` — above + below = ∅
+
+**Diagram-level MFS (`DiagramMFS.lean`):**
+- `denotes_atomize` — ⟦atomize P⟧ = ⟦P⟧ (splitting into pairwise relations keeps the semantics)
+- `diagramMFS_refines` — each constraint-level MFS is contained in a diagram-level MFS
+- `greedy_isMFS` / `greedy_isDiagramMFS` — the greedy pass gives an MFS
+- `uncontested_atom_kept` — a relation in no IIS is in every diagram-level MFS
+- `partial_keep_witness` — a program where a part of a constraint is kept and a part is dropped
+
+**Open (outside the default build, in `CyclicConjecture.lean`):**
 - `cyclic_cw_ccw_unsat` — CW + CCW = ∅ (sorry: geometric core)
 
 ## CI
