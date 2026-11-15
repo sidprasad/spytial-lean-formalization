@@ -264,10 +264,17 @@ def vrel (R : Realization) (L : List Atom) (i j k : Nat) (hi : i < L.length) (hj
     let θj  := (j + k) * st
     if Real.sin θi = Real.sin θj then
       aligned_h bi bj
-    else if Real.sin θi > Real.sin θj then
+    else if Real.sin θi < Real.sin θj then
       above bi bj
     else
       above bj bi
+
+-- In a four-node clockwise cycle at rotation zero, a is on the right and b is at the bottom.
+example (R : Realization) (a b c d : Atom) :
+    vrel R [a, b, c, d] 0 1 0 (by norm_num) (by norm_num) ↔
+      ∃ ba bb, R a = some ba ∧ R b = some bb ∧ above ba bb := by
+  have step : angleStep 4 = Real.pi / 2 := by unfold angleStep; push_cast; ring
+  norm_num [vrel, nth!, step, Real.sin_pi_div_two]
 
 /-- For a given list L and offset k, all pairwise induced h/v relations hold. -/
 def allPairs_ok (R : Realization) (L : List Atom) (k : Nat) : Prop :=

@@ -243,7 +243,7 @@ private noncomputable def cyclicPair (L : List Atom) (k : Nat) (i j : Fin L.leng
   let a := L[i]
   let b := L[j]
   [if x i = x j then .aligned_v a b else if x i < x j then .left a b else .left b a,
-   if y i = y j then .aligned_h a b else if y i > y j then .above a b else .above b a]
+   if y i = y j then .aligned_h a b else if y i < y j then .above a b else .above b a]
 
 /-- All pair relations required by one rotation. Each unordered index pair is visited once. -/
 noncomputable def cyclicRelations (L : List Atom) (k : Nat) : List Rel :=
