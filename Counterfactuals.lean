@@ -1,124 +1,61 @@
 /-
-# Counterfactuals.lean — Diagram vs. Report Semantics for UNSAT Programs
+# Counterfactuals.lean — the diagram that Spytial shows for an UNSAT program
 
-This file mechanizes the counterfactual layout semantics described in
-**§5 (Constraint (Dis)Satisfaction)** of the PLDI 2026 paper, together
-with the corresponding runtime in `spytial-core`. It extends `Main.lean`
-(which mechanizes §4 (Formalizing Spytial)).
+When a program has no realization, `spytial-core` still shows a diagram.
+It keeps a feasible part of the program and drops the remainder. This
+file mechanizes which part it keeps.
 
-## The two outputs of counterfactual rendering
+## The unit is a diagram-element relation, not a source constraint
 
-When a program `P` is unsatisfiable, the runtime produces **two**
-distinct artifacts (paper §5.2, three-level reporting at lines 1351-1358):
+`spytial-core` does not keep or drop a source constraint as a whole. It
+translates each constraint into **units**. A unit is a list of
+**alternatives**, and an alternative is a set of **relations** between
+diagram elements ("a is left of b"). A unit holds if one of its
+alternatives holds.
 
-* The **diagram** — what the user sees rendered. This is the *layout
-  level* of paper §5.2. It is computed from a **Maximal Feasible
-  Subset (MFS)** of `P`: we keep the MFS, drop its complement, and
-  solve the resulting feasible system.
+| Construct                         | Units                                                       |
+|-----------------------------------|-------------------------------------------------------------|
+| `orientation`, `align` (always)   | one unit for each pair; one alternative                     |
+| `size`, `hideatom` (always)       | one unit for each atom; one alternative                     |
+| `cyclic` (always)                 | one unit for each path; one alternative for each offset `k` |
+| `orientation`, `align`, `size`, `hideatom` (never) | one unit; one alternative for each pair / atom |
+| `group₁`, `group₂` (always, never), `cyclic` (never) | one unit; one alternative (not decomposed) |
 
-* The **report** — what the user reads alongside the diagram, explaining
-  *why* constraints had to be dropped. This is the *Diagram Element*
-  and *Constraint* levels of paper §5.2 (line 1355-1358). It is
-  computed from the **Irreducible Infeasible Subsystems (IISes)** of
-  `P` — minimal contradictory cores.
+`units_correct` proves, for each construct, that the constraint holds iff
+all its units hold.
 
-Concretely:
+## The construction
 
-  ```
-                ┌──────────── MFS-based ────────────┐
-   counterfactualDiagram P  : Set Realization     -- ⟦P⟧₊
-                              (the rendered geometry)
+`greedy` goes through the units in sequence. For each unit it commits to
+the first alternative that is feasible together with the relations kept
+until then. If no alternative is feasible, it drops the unit. It does not
+go back. This is `computeMaximalFeasibleSubset` in
+`qualitative-constraint-validator.ts`.
 
-                ┌──────────── IIS-based ────────────┐
-   counterfactualReport P   : Set Program
-                              (the conflict explanation)
-  ```
+## Results
 
-The two are linked by **two dual theorems**:
+* `greedy_feasible` — the kept relations have a realization.
+* `greedy_dichotomy` — each unit is kept, or each of its alternatives
+  conflicts with the kept relations.
+* `kept_constraint_satisfied` — if all units of a constraint are kept,
+  the diagram satisfies the constraint. Thus a part of a constraint can
+  hold while a different part is dropped (`partial_keep`).
+* `greedy_must_isMFS` — if each unit has one alternative, the kept set
+  is a Maximal Feasible Subset of the relations. Then the general theory
+  applies: each dropped relation is in an IIS (`dropped_in_some_iis`),
+  and a relation in no IIS is kept (`uncontested_kept`).
+* `feasible_hits_every_iis` — each IIS has a relation that is not kept.
+* `commit_not_maximal` — with more than one alternative, the commitment
+  can drop a unit that is compatible with the other units. The result is
+  maximal for the committed alternatives only.
 
-* `mfs_hits_every_iis` — every IIS in the report contains at least one
-  constraint dropped by the diagram (i.e., the MFS-complement is a
-  hitting set for the report).
-* `dropped_belongs_to_some_iis` — conversely, every constraint dropped
-  by the diagram features in some IIS of the report.
+## Not modeled
 
-So the drop-set and the report cover each other in both directions:
-no dropped constraint is "spurious" (every drop has a justifying
-conflict), and no IIS escapes the drop-set (every conflict has a
-witnessing drop).
-
-## Why this file exists
-
-`Main.lean` proves `unsat_iff_empty` (§4.4, paper line 1164):
-  `⟦P⟧ = ∅ ↔ ∀ R ∈ WF, ¬ modelsP R P`
-
-When `⟦P⟧ = ∅`, the user has given an over-constrained spec and there is
-*no* realization to draw. Yet spytial-core still renders both a diagram
-and a report. This file formalizes:
-
-  (1) what each artifact is, semantically;
-  (2) which constraints each is built from (MFS vs IIS);
-  (3) the conditions under which each exists, and their guarantees.
-
-## Paper ↔ Lean ↔ spytial-core correspondence
-
-| Concept                       | Paper                                | Lean (this file)                       | spytial-core (TypeScript)                                            |
-|-------------------------------|--------------------------------------|----------------------------------------|----------------------------------------------------------------------|
-| Feasibility                   | §4.4 "denotation nonempty"           | `Feasible P`                           | `(denotes M).Nonempty` check in validators                           |
-| Irreducible Infeasible Subsys | §5.1 (line 1199)                     | `IsIIS P I`                            | `minimalConflictingSet` in `constraint-validator.ts`                 |
-| quasi-IIS (subset-minimal)    | §5.1 (line 1250)                     | `IsIIS` (same — minimality is the same definition) | `getMinimalDisjunctiveConflict` in `constraint-validator.ts:1143` |
-| Maximal Feasible Subset       | §5.2 (dual, implicit)                | `IsMFS P M`                            | `computeMaximalFeasibleSubset` in `qualitative-constraint-validator.ts` |
-| **Counterfactual diagram**    | §5.2 "Layout level" (line 1353)      | `counterfactualDiagram P` (`⟦P⟧₊`)     | `CounterfactualLayoutResult` in `layoutinstance.ts`                  |
-| **Counterfactual report**     | §5.2 "Diagram Element / Constraint" (line 1355-1358) | `counterfactualReport P`               | `CounterfactualLayoutResult.conflictingConstraints`                  |
-| Cut-out constraints           | §5.2 "relaxing inequalities"         | `droppedConstraints P M`               | `layout.constraints.filter(...)` in `layoutinstance.ts:1424`         |
-
-## A subtle point: IIS-relaxation (paper) vs MFS-keeping (spytial-core)
-
-The paper (§5.2, line 1353) describes the counterfactual diagram as
-"relaxing all solver-level inequalities in the IIS". That removes one
-quasi-IIS from the program and re-solves.
-
-spytial-core's **qualitative validator** (the default since the
-re-architecture) instead computes a global **MFS** and removes its
-complement. These two strategies are **not equivalent**:
-
-* **MFS-keeping** is feasible *by construction* (`mfs_kept_is_feasible`).
-* **IIS-removal** is *not* guaranteed feasible: removing a single IIS
-  `I` leaves `P \ I`, which can still contain another IIS (theorem
-  `iis_removal_can_remain_infeasible` — when two IISes are disjoint,
-  removing one preserves the other's infeasibility).
-
-A single MFS pass breaks **every** IIS simultaneously (via the
-hitting-set property `mfs_hits_every_iis`); a single IIS pass breaks
-only the chosen one. The paper's strategy is therefore an *iterative*
-relaxation (one IIS at a time, until feasible), while spytial-core's
-qualitative validator computes the feasible target in one pass.
-
-This is precisely why the *diagram* (geometry source) is built from
-the MFS, while the *report* (explanation overlay) is built from the
-IIS family. They have different jobs.
-
-## The unit of the MFS: source constraint here, diagram element in the runtime
-
-`IsMFS` in this file keeps or drops a full **source constraint**.
-spytial-core keeps or drops **diagram-element relations** (one pair of
-nodes), so a part of one source constraint can stay while a different
-part is dropped. `DiagramMFS.lean` instantiates the theory of this file
-at that level (`IsDiagramMFS P D := IsMFS (atomize P) D`), proves that
-the greedy pass of the runtime gives such an MFS, and relates the two
-levels. All theorems of this file apply to the diagram level unchanged.
-
-## File outline
-
-1.  **Feasibility** (`Feasible`)                       — basic predicate.
-2.  **IIS** (`IsIIS`)                                  — paper §5.1.
-3.  **MFS** (`IsMFS`)                                  — dual of IIS.
-4.  **Duality** (`mfs_hits_every_iis`)                 — the bridge theorem.
-5.  **Diagram** (`counterfactualDiagram`, `⟦P⟧₊`)      — MFS-based; paper §5.2 "Layout level".
-6.  **Report** (`counterfactualReport`)                — IIS-family-based; paper §5.2 "Diagram Element / Constraint levels".
-7.  **Cut-out set** (`droppedConstraints`)             — paper "relaxing".
-
-Extends `Main.lean`.
+* The feasibility check. `greedy` uses the semantic predicate
+  `RFeasible`. The implementation uses order graphs.
+* The decomposition of group constraints. The group boundary is one
+  existential that all members share, so `group₁` and `group₂` stay one
+  unit here. The implementation uses one unit for each non-member.
 -/
 
 import Main
@@ -130,625 +67,721 @@ namespace Spytial
 namespace Counterfactual
 
 --------------------------------------------------------------------------------
--- 1. Feasibility                                                  (paper §4.4)
+-- 1. MFS and IIS for an antimonotone feasibility predicate
 --------------------------------------------------------------------------------
 
-/-- A program is **feasible** iff its denotation is inhabited — i.e., there
-    is at least one well-formed realization satisfying every qualified
-    constraint.
+section Generic
 
-    This is the positive dual of "unsatisfiable" as formalized in
-    `Main.lean` via `unsat_iff_empty` (paper line 1164):
-      `⟦P⟧ = ∅ ↔ ∀ R ∈ WF, ¬ modelsP R P`
-    (Lean's `modelsP` is the program-level lift of constraint satisfaction;
-    the paper writes this with `\modelsC` — same notion, different name.)
-    Hence `Feasible P ↔ ¬ (⟦P⟧ = ∅) ↔ ∃ R ∈ WF, modelsP R P`. -/
-def Feasible (P : Program) : Prop := (denotes P).Nonempty
+variable {α : Type*} [DecidableEq α] {Feas : Finset α → Prop}
 
-/-- **Antimonotonicity of feasibility.** Removing constraints preserves
-    feasibility. Direct corollary of `antimonotonicity` in `Main.lean`
-    (paper §4.4, equation on line 1157). -/
-lemma feasible_of_subset {P Q : Program} (hPQ : P ⊆ Q) (hQ : Feasible Q) :
-    Feasible P :=
-  hQ.mono (antimonotonicity hPQ)
+/-- A subset of a feasible set is feasible. -/
+def Antimono (Feas : Finset α → Prop) : Prop :=
+  ∀ ⦃S T : Finset α⦄, S ⊆ T → Feas T → Feas S
 
-/-- The empty program is feasible iff `WF` is inhabited.
-    Combines `denotes_empty : ⟦∅⟧ = WF` (Main.lean) with the definition. -/
-lemma empty_feasible_iff : Feasible (∅ : Program) ↔ WF.Nonempty := by
-  unfold Feasible
-  rw [denotes_empty]
+/-- `I` is an **Irreducible Infeasible Subsystem** of `P`: an infeasible
+    subset that becomes feasible when any one element is removed. -/
+def IsIIS (Feas : Finset α → Prop) (P I : Finset α) : Prop :=
+  I ⊆ P ∧ ¬ Feas I ∧ ∀ c ∈ I, Feas (I.erase c)
 
---------------------------------------------------------------------------------
--- 2. Irreducible Infeasible Subsystem (IIS)                       (paper §5.1)
---------------------------------------------------------------------------------
+/-- `M` is a **Maximal Feasible Subset** of `P`: a feasible subset that
+    becomes infeasible when any other element of `P` is added. -/
+def IsMFS (Feas : Finset α → Prop) (P M : Finset α) : Prop :=
+  M ⊆ P ∧ Feas M ∧ ∀ c ∈ P, c ∉ M → ¬ Feas (insert c M)
 
-/-- `I` is an **Irreducible Infeasible Subsystem** of `P` iff:
-    (1) `I ⊆ P`,
-    (2) `I` is infeasible (jointly contradictory), and
-    (3) removing any single constraint of `I` makes it feasible.
-
-    This is the paper's definition verbatim (§5.1, lines 1207-1208):
-    *"An IIS is a minimal subset of constraints that cannot be satisfied
-    together, even though every proper subset is feasible."*
-
-    The paper's runtime computes a **quasi-IIS** by iterative deletion
-    (§5.1, line 1250). The quasi-IIS is subset-minimal — i.e., it
-    satisfies (3) — but smaller IISes may exist elsewhere in `P`
-    (line 1256). Our `IsIIS` predicate captures exactly subset-minimality,
-    matching the quasi-IIS notion used by `spytial-core`. -/
-def IsIIS (P I : Program) : Prop :=
-  I ⊆ P ∧ ¬ Feasible I ∧ ∀ c ∈ I, Feasible (I.erase c)
-
-namespace IsIIS
-lemma subset {P I : Program} (h : IsIIS P I) : I ⊆ P := h.1
-lemma infeasible {P I : Program} (h : IsIIS P I) : ¬ Feasible I := h.2.1
-lemma erase_feasible {P I : Program} (h : IsIIS P I) :
-    ∀ c ∈ I, Feasible (I.erase c) := h.2.2
-end IsIIS
-
-/-- **No IIS in a feasible program.** A trivial sanity check: if `P` itself
-    has a satisfying realization, then no infeasible-minimal subsystem can
-    exist within it. -/
-lemma no_iis_of_feasible {P : Program} (hSat : Feasible P) :
-    ¬ ∃ I, IsIIS P I := by
-  rintro ⟨I, hIP, hInfeas, _⟩
-  exact hInfeas (feasible_of_subset hIP hSat)
-
-/-- **Existence of an IIS.** When `P` is infeasible, `P` admits at least
-    one IIS.
-
-    *Proof technique.* We construct an IIS as a **minimum-cardinality**
-    infeasible subset of `P` (which exists because `P` itself is in that
-    family). Such a set is automatically subset-minimal: any strict subset
-    has smaller cardinality, so it cannot be in the family — i.e., it is
-    feasible.
-
-    This existence proof is **non-constructive**: it does not match the
-    paper's iterative-deletion algorithm (§5.1, line 1250-1256), but
-    certifies that the algorithm's target is well-defined. The paper's
-    procedure produces *some* subset-minimal infeasible subset, not
-    necessarily one of minimum cardinality — both are IISes by our
-    definition. -/
-theorem iis_exists_of_infeasible (P : Program) (hUnsat : ¬ Feasible P) :
-    ∃ I, IsIIS P I := by
+/-- Each infeasible subset of `P` contains an IIS of `P`. -/
+theorem iis_within {P Q : Finset α} (hQP : Q ⊆ P) (hQ : ¬ Feas Q) :
+    ∃ I, IsIIS Feas P I ∧ I ⊆ Q := by
   classical
-  -- The family of infeasible subsets of P. P itself is in this family.
-  have hP_in_F :
-      P ∈ P.powerset.filter (fun I => ¬ (denotes I).Nonempty) := by
+  have hQ_in : Q ∈ Q.powerset.filter (fun I => ¬ Feas I) := by
     simp only [Finset.mem_filter, Finset.mem_powerset]
-    exact ⟨subset_refl P, hUnsat⟩
-  -- Take a minimum-cardinality member of the family.
+    exact ⟨subset_refl Q, hQ⟩
   obtain ⟨I, hI_mem, hI_min⟩ :=
-    Finset.exists_min_image
-      (P.powerset.filter (fun I => ¬ (denotes I).Nonempty))
-      Finset.card ⟨P, hP_in_F⟩
+    Finset.exists_min_image (Q.powerset.filter (fun I => ¬ Feas I))
+      Finset.card ⟨Q, hQ_in⟩
   simp only [Finset.mem_filter, Finset.mem_powerset] at hI_mem
-  obtain ⟨hIP, hIInfeas⟩ := hI_mem
-  refine ⟨I, hIP, hIInfeas, ?_⟩
-  -- Show every single-element erasure of I is feasible.
-  -- If I.erase c were infeasible, it would be a smaller member of the
-  -- family — contradicting I's minimum cardinality.
-  intros c hcI
-  by_contra hErase_infeas
-  have hErase_in :
-      I.erase c ∈ P.powerset.filter (fun I => ¬ (denotes I).Nonempty) := by
+  obtain ⟨hIQ, hIInf⟩ := hI_mem
+  refine ⟨I, ⟨hIQ.trans hQP, hIInf, ?_⟩, hIQ⟩
+  intro c hcI
+  by_contra hErase
+  have hErase_in : I.erase c ∈ Q.powerset.filter (fun I => ¬ Feas I) := by
     simp only [Finset.mem_filter, Finset.mem_powerset]
-    exact ⟨(Finset.erase_subset c I).trans hIP, hErase_infeas⟩
-  have hErase_card : (I.erase c).card < I.card :=
-    Finset.card_erase_lt_of_mem hcI
-  have h_le := hI_min (I.erase c) hErase_in
+    exact ⟨(Finset.erase_subset c I).trans hIQ, hErase⟩
+  have hCard := Finset.card_erase_lt_of_mem hcI
+  have hLe := hI_min (I.erase c) hErase_in
   omega
 
-/-- **Characterization.** A program is infeasible iff it admits an IIS.
-    This is the IIS-side analogue of `unsat_iff_empty` from `Main.lean`
-    (paper §4.4, line 1164). -/
-theorem unsat_iff_exists_iis (P : Program) :
-    ¬ Feasible P ↔ ∃ I, IsIIS P I := by
-  refine ⟨iis_exists_of_infeasible P, ?_⟩
-  rintro ⟨I, hIP, hInfeas, _⟩ hFeas
-  exact hInfeas (feasible_of_subset hIP hFeas)
+/-- A set is infeasible iff it has an IIS. -/
+theorem infeasible_iff_exists_iis (hmono : Antimono Feas) (P : Finset α) :
+    ¬ Feas P ↔ ∃ I, IsIIS Feas P I := by
+  constructor
+  · intro h
+    obtain ⟨I, hI, _⟩ := iis_within (subset_refl P) h
+    exact ⟨I, hI⟩
+  · rintro ⟨I, hIP, hInf, _⟩ hF
+    exact hInf (hmono hIP hF)
 
-/-- **Strong existence.** Every infeasible subset of `P` contains an IIS.
-    Useful for reasoning about the search procedure in §5.1: whatever
-    infeasible subsystem the solver isolates first, an IIS lurks inside. -/
-theorem iis_subset_of_infeasible (P Q : Program) (hQP : Q ⊆ P)
-    (hQUnsat : ¬ Feasible Q) : ∃ I, IsIIS P I ∧ I ⊆ Q := by
+/-- Each feasible subset of `P` is contained in an MFS of `P`. -/
+theorem mfs_extends {P Q : Finset α} (hQP : Q ⊆ P) (hQ : Feas Q) :
+    ∃ M, IsMFS Feas P M ∧ Q ⊆ M := by
   classical
-  obtain ⟨I, hIQ, hInfeas, hErase⟩ := iis_exists_of_infeasible Q hQUnsat
-  exact ⟨I, ⟨hIQ.trans hQP, hInfeas, hErase⟩, hIQ⟩
-
---------------------------------------------------------------------------------
--- 3. Maximal Feasible Subset (MFS)                       (dual of §5.1's IIS)
---------------------------------------------------------------------------------
-
-/-- `M` is a **Maximal Feasible Subset** of `P` iff:
-    (1) `M ⊆ P`,
-    (2) `M` is feasible, and
-    (3) adjoining any further constraint of `P` to `M` makes it infeasible.
-
-    The MFS is the **set of constraints kept** when rendering a
-    counterfactual diagram; constraints in `P \ M` are *cut out*.
-
-    *The paper vs. the runtime.* The PLDI paper (§5.2, line 1353) phrases
-    counterfactual rendering as "relaxing all solver-level inequalities
-    in the IIS" — i.e., remove the IIS, keep the rest. spytial-core's
-    current default (the **qualitative validator**) instead computes a
-    global MFS directly. By the duality theorem `mfs_hits_every_iis`
-    (below), the MFS-complement is a hitting set for the entire IIS
-    family — so MFS-keeping breaks *every* IIS in one shot, while
-    IIS-removal breaks only the chosen IIS.
-
-    *Single-step maximality.* Condition (3) checks only single-element
-    extensions. This is equivalent to "no feasible strict superset
-    exists" because `antimonotonicity` lifts feasibility down through
-    arbitrary subsets — so the existence of *any* feasible superset
-    implies the existence of a feasible *one-element* extension. -/
-def IsMFS (P M : Program) : Prop :=
-  M ⊆ P ∧ Feasible M ∧ ∀ c ∈ P, c ∉ M → ¬ Feasible (insert c M)
-
-namespace IsMFS
-lemma subset {P M : Program} (h : IsMFS P M) : M ⊆ P := h.1
-lemma feasible {P M : Program} (h : IsMFS P M) : Feasible M := h.2.1
-lemma maximal {P M : Program} (h : IsMFS P M) :
-    ∀ c ∈ P, c ∉ M → ¬ Feasible (insert c M) := h.2.2
-end IsMFS
-
-/-- When `P` is feasible, `P` is itself an MFS (the only one). -/
-lemma mfs_self_of_feasible {P : Program} (hSat : Feasible P) : IsMFS P P :=
-  ⟨subset_refl P, hSat, fun _ hcP hcM => absurd hcP hcM⟩
-
-/-- **Uniqueness under feasibility.** When `P` is feasible, *the only* MFS
-    is `P` itself. Any strict subset would be non-maximal because the
-    full program is a feasible extension (antimonotonicity). -/
-lemma mfs_unique_of_feasible {P : Program} (hSat : Feasible P)
-    {M : Program} (hMFS : IsMFS P M) : M = P := by
-  by_contra hNe
-  have hSS : M ⊂ P := Finset.ssubset_iff_subset_ne.mpr ⟨hMFS.subset, hNe⟩
-  obtain ⟨c, hcP, hcM⟩ := Finset.exists_of_ssubset hSS
-  -- If insert c M were feasible, it would contradict maximality.
-  -- And it is feasible: insert c M ⊆ P, and P is feasible, so by
-  -- antimonotonicity its denotation is nonempty.
-  exact hMFS.maximal c hcP hcM
-    (feasible_of_subset (Finset.insert_subset_iff.mpr ⟨hcP, hMFS.subset⟩) hSat)
-
-/-- **Existence of MFS.** Every program admits at least one MFS, provided
-    `WF.Nonempty` (so the empty subset is feasible and the family is
-    nonempty).
-
-    *Proof technique.* Take a feasible subset of **maximum cardinality**.
-    Such a set is automatically maximal: any strict superset has greater
-    cardinality, so cannot be in the family — i.e., is infeasible.
-
-    Like `iis_exists_of_infeasible`, this is non-constructive and does
-    not match the runtime's greedy algorithm (`computeMaximalFeasibleSubset`
-    in `qualitative-constraint-validator.ts`). It proves the runtime's
-    target is well-defined. -/
-theorem mfs_exists (P : Program) (hWF : WF.Nonempty) : ∃ M, IsMFS P M := by
-  classical
-  -- The family of feasible subsets of P. ∅ is in this family (since WF ≠ ∅).
-  have h_empty_feasible :
-      (∅ : Program) ∈ P.powerset.filter (fun M => (denotes M).Nonempty) := by
+  have hQ_in : Q ∈ P.powerset.filter (fun M => Q ⊆ M ∧ Feas M) := by
     simp only [Finset.mem_filter, Finset.mem_powerset]
-    refine ⟨Finset.empty_subset P, ?_⟩
-    rw [denotes_empty]; exact hWF
-  -- Take a maximum-cardinality member of the family.
+    exact ⟨hQP, subset_refl Q, hQ⟩
   obtain ⟨M, hM_mem, hM_max⟩ :=
-    Finset.exists_max_image (P.powerset.filter (fun M => (denotes M).Nonempty))
-      Finset.card ⟨∅, h_empty_feasible⟩
+    Finset.exists_max_image (P.powerset.filter (fun M => Q ⊆ M ∧ Feas M))
+      Finset.card ⟨Q, hQ_in⟩
   simp only [Finset.mem_filter, Finset.mem_powerset] at hM_mem
-  obtain ⟨hMP, hMFeas⟩ := hM_mem
-  refine ⟨M, hMP, hMFeas, ?_⟩
-  -- Maximality: if `insert c M` were feasible, it would be a larger member
-  -- of the family — contradicting M's maximum cardinality.
-  intros c hcP hcM hFeasIns
-  have hIns_in_S :
-      insert c M ∈ P.powerset.filter (fun M => (denotes M).Nonempty) := by
+  obtain ⟨hMP, hQM, hMFeas⟩ := hM_mem
+  refine ⟨M, ⟨hMP, hMFeas, ?_⟩, hQM⟩
+  intro c hcP hcM hIns
+  have hIns_in :
+      insert c M ∈ P.powerset.filter (fun M => Q ⊆ M ∧ Feas M) := by
     simp only [Finset.mem_filter, Finset.mem_powerset]
-    exact ⟨Finset.insert_subset_iff.mpr ⟨hcP, hMP⟩, hFeasIns⟩
+    exact ⟨Finset.insert_subset_iff.mpr ⟨hcP, hMP⟩,
+           hQM.trans (Finset.subset_insert c M), hIns⟩
   have hCard : M.card < (insert c M).card := by
     rw [Finset.card_insert_of_notMem hcM]; omega
-  have h_le := hM_max (insert c M) hIns_in_S
+  have hLe := hM_max (insert c M) hIns_in
   omega
 
---------------------------------------------------------------------------------
--- 4. MFS ↔ IIS Duality                                            (key result)
---------------------------------------------------------------------------------
+/-- If `P` is feasible, its only MFS is `P`. -/
+theorem mfs_eq_of_feasible (hmono : Antimono Feas) {P M : Finset α}
+    (hP : Feas P) (hM : IsMFS Feas P M) : M = P := by
+  by_contra hNe
+  obtain ⟨c, hcP, hcM⟩ :=
+    Finset.exists_of_ssubset (Finset.ssubset_iff_subset_ne.mpr ⟨hM.1, hNe⟩)
+  exact hM.2.2 c hcP hcM (hmono (Finset.insert_subset_iff.mpr ⟨hcP, hM.1⟩) hP)
 
-/-- **Hitting-set duality.** Every MFS misses at least one constraint from
-    every IIS. Equivalently: the *complement* of an MFS is a **hitting
-    set** for the family of IISes — that is, every IIS contains at least
-    one constraint that the MFS does not.
-
-    *Why this is the central theorem of this file.* The paper (§5.2,
-    line 1353) defines the counterfactual diagram by **removing the
-    IIS**. spytial-core's current implementation instead **keeps the MFS**
-    (drops the complement). These two strategies coexist in practice
-    (cf. `layoutinstance.ts:1419-1421`), and this theorem proves they are
-    compatible:
-
-      *Cutting out the MFS-complement simultaneously breaks every IIS.*
-
-    So the diagram produced by MFS-removal is "globally consistent" — it
-    breaks every minimal conflict, not just the one the solver happened
-    to find first. -/
-theorem mfs_hits_every_iis {P M I : Program}
-    (hMFS : IsMFS P M) (hIIS : IsIIS P I) :
-    ∃ c ∈ I, c ∉ M := by
+/-- **Hitting set.** A feasible set does not contain an IIS: each IIS has
+    an element outside it. -/
+theorem feasible_hits_every_iis (hmono : Antimono Feas) {P K I : Finset α}
+    (hK : Feas K) (hI : IsIIS Feas P I) : ∃ c ∈ I, c ∉ K := by
   by_contra hNo
   push_neg at hNo
-  -- ¬ ∃ c ∈ I, c ∉ M   ⇒   I ⊆ M   ⇒   I is feasible (since M is).
-  -- But I is an IIS, hence infeasible. Contradiction.
-  exact hIIS.infeasible (feasible_of_subset hNo hMFS.feasible)
+  exact hI.2.1 (hmono hNo hK)
 
-/-- **Hitting-set corollary, restated.** The constraints *dropped* from
-    the diagram (`P \ M` for an MFS `M`) intersect every IIS — i.e., the
-    drop set is a hitting set for the IIS family. Direct restatement of
-    `mfs_hits_every_iis` in `droppedConstraints` form, useful when
-    reasoning about the rendering pipeline. -/
-theorem iis_complement_is_hitting_set {P M I : Program}
-    (hMFS : IsMFS P M) (hIIS : IsIIS P I) :
-    (I ∩ (P \ M)).Nonempty := by
-  obtain ⟨c, hcI, hcM⟩ := mfs_hits_every_iis hMFS hIIS
-  exact ⟨c, Finset.mem_inter.mpr ⟨hcI, Finset.mem_sdiff.mpr ⟨hIIS.subset hcI, hcM⟩⟩⟩
-
-/-- **Converse direction of duality.** Every constraint *dropped* by the
-    diagram (i.e., in `P \ M` for an MFS `M`) belongs to some IIS of `P`.
-
-    *Why this is non-trivial.* `mfs_hits_every_iis` goes the other way —
-    it picks a witness *given* an IIS. This theorem goes from a dropped
-    constraint to an IIS containing it. The proof uses MFS-maximality:
-    if `c` is dropped, then `insert c M` is infeasible (else `c` could
-    have been added to the MFS, contradicting maximality), so some IIS
-    lives inside `insert c M`, and that IIS must contain `c` (otherwise
-    it would be a subset of the feasible `M`).
-
-    Together with `mfs_hits_every_iis`, this proves that the drop-set
-    and the IIS family **cover each other**: every drop has a
-    justifying conflict, and every conflict has a witnessing drop. -/
-theorem dropped_belongs_to_some_iis {P M : Program} (hMFS : IsMFS P M)
-    {c : QualifiedConstraint} (hc : c ∈ P \ M) :
-    ∃ I, IsIIS P I ∧ c ∈ I := by
-  rw [Finset.mem_sdiff] at hc
-  obtain ⟨hcP, hcM⟩ := hc
-  -- insert c M is infeasible by MFS-maximality.
-  have hInfeas : ¬ Feasible (insert c M) := hMFS.maximal c hcP hcM
-  -- insert c M ⊆ P (since c ∈ P and M ⊆ P).
-  have hSub : insert c M ⊆ P :=
-    Finset.insert_subset_iff.mpr ⟨hcP, hMFS.subset⟩
-  -- Get an IIS contained in insert c M (and hence in P).
-  obtain ⟨I, hIIS, hI_sub⟩ :=
-    iis_subset_of_infeasible P (insert c M) hSub hInfeas
-  refine ⟨I, hIIS, ?_⟩
-  -- c ∈ I, because otherwise I ⊆ M, which is feasible — contradicting
-  -- I's infeasibility as an IIS.
+/-- **Each dropped element is in a conflict.** An element of `P` that is
+    not in an MFS is in some IIS of `P`. -/
+theorem dropped_in_some_iis (hmono : Antimono Feas) {P M : Finset α} {c : α}
+    (hM : IsMFS Feas P M) (hcP : c ∈ P) (hcM : c ∉ M) :
+    ∃ I, IsIIS Feas P I ∧ c ∈ I := by
+  obtain ⟨I, hI, hIsub⟩ :=
+    iis_within (Finset.insert_subset_iff.mpr ⟨hcP, hM.1⟩) (hM.2.2 c hcP hcM)
+  refine ⟨I, hI, ?_⟩
   by_contra hcI
-  have hI_in_M : I ⊆ M := by
+  have hIM : I ⊆ M := by
     intro d hd
-    rcases Finset.mem_insert.mp (hI_sub hd) with hEq | hMem
+    rcases Finset.mem_insert.mp (hIsub hd) with hEq | hMem
     · exact absurd (hEq ▸ hd) hcI
     · exact hMem
-  exact hIIS.infeasible (feasible_of_subset hI_in_M hMFS.feasible)
+  exact hI.2.1 (hmono hIM hM.2.1)
 
-/-- **MFS-keeping yields feasibility by definition** — trivial restatement,
-    but stated explicitly to make the contrast with IIS-removal sharp.
-    The MFS `M` *is* the rendered program; it is feasible by `IsMFS.feasible`. -/
-theorem mfs_kept_is_feasible {P M : Program} (hMFS : IsMFS P M) :
-    Feasible M := hMFS.feasible
+/-- **An element in no conflict is kept.** -/
+theorem uncontested_kept (hmono : Antimono Feas) {P M : Finset α} {c : α}
+    (hM : IsMFS Feas P M) (hcP : c ∈ P)
+    (hFree : ∀ I, IsIIS Feas P I → c ∉ I) : c ∈ M := by
+  by_contra hcM
+  obtain ⟨I, hI, hcI⟩ := dropped_in_some_iis hmono hM hcP hcM
+  exact hFree I hI hcI
 
-/-- **IIS-removal does NOT generally yield feasibility.** This formalizes
-    the asymmetry between MFS-keeping and IIS-removal:
+/-- **The removal of one IIS is not sufficient.** If a second IIS is
+    disjoint from the first, the remainder is still infeasible. This is
+    why the diagram keeps a feasible set and does not remove one IIS. -/
+theorem iis_removal_insufficient (hmono : Antimono Feas) {P I₁ I₂ : Finset α}
+    (hI₂ : IsIIS Feas P I₂) (hDisj : Disjoint I₁ I₂) : ¬ Feas (P \ I₁) :=
+  fun hF => hI₂.2.1 (hmono
+    (fun _ hc => Finset.mem_sdiff.mpr
+      ⟨hI₂.1 hc, fun h => Finset.disjoint_left.mp hDisj h hc⟩) hF)
 
-    * `mfs_kept_is_feasible` — removing the MFS-complement always leaves
-      a feasible program.
-    * This theorem — removing a single IIS need not, because *other*
-      IISes can persist.
-
-    *Witness condition.* If `P` contains two **disjoint** IISes `I₁` and
-    `I₂`, then `P \ I₁` is still infeasible: `I₂ ⊆ P \ I₁` (since `I₂` is
-    in `P` but disjoint from `I₁`), and `I₂` is infeasible by assumption,
-    so by `feasible_of_subset` any superset of `I₂` is infeasible too.
-
-    This is why spytial-core's qualitative validator uses MFS-keeping
-    rather than iterative IIS-removal: a single MFS pass breaks every
-    IIS simultaneously (`mfs_hits_every_iis`), whereas a single IIS pass
-    only breaks the chosen one. -/
-theorem iis_removal_can_remain_infeasible {P I₁ I₂ : Program}
-    (_hI₁ : IsIIS P I₁) (hI₂ : IsIIS P I₂) (hDisj : Disjoint I₁ I₂) :
-    ¬ Feasible (P \ I₁) := by
-  -- (`_hI₁` unused in the proof — kept for semantic framing: the user's
-  --  concern is specifically about removing an IIS. The proof itself
-  --  only needs that I₂ is an IIS and I₁ is disjoint from I₂.)
-  -- I₂ ⊆ P \ I₁ : I₂ ⊆ P (IIS) and I₂ ∩ I₁ = ∅ (disjoint).
-  have hI₂_sub : I₂ ⊆ P \ I₁ := by
-    intro c hc
-    refine Finset.mem_sdiff.mpr ⟨hI₂.subset hc, ?_⟩
-    intro hcI₁
-    exact (Finset.disjoint_left.mp hDisj) hcI₁ hc
-  -- If P \ I₁ were feasible, I₂ would inherit feasibility — contradicting
-  -- the fact that I₂ is an IIS (hence infeasible).
-  intro hFeas
-  exact hI₂.infeasible (feasible_of_subset hI₂_sub hFeas)
+end Generic
 
 --------------------------------------------------------------------------------
--- 5. Counterfactual Diagram (MFS-based geometry)                  (paper §5.2)
+-- 2. Diagram-element relations
 --------------------------------------------------------------------------------
 
-/-- The **counterfactual diagram** of `P` is the union of denotations of
-    all its MFSes. This is the **layout-level** output (paper §5.2 line
-    1353): the *rendered geometry* that the user sees.
+/-- A relation between diagram elements.
 
-    Two behaviours follow:
-    * **SAT case** — `P` feasible: `⟦P⟧₊ = ⟦P⟧` (Theorem
-      `counterfactualDiagram_eq_denotes_of_feasible`). Nothing is dropped;
-      the user's spec is rendered verbatim.
-    * **UNSAT case** — `P` infeasible: `⟦P⟧₊` collects realizations of
-      every maximally-satisfiable fragment. The diagram realizes *some*
-      MFS, with the complement annotated (via `counterfactualReport`) as
-      "cut out".
+    * `of q` — a constraint on one pair or one atom, for example
+      `orientation {(a,b)} right` ("a is left of b").
+    * `cyclicAt L k` — the path `L` is on a circle at offset `k`. -/
+inductive Rel where
+  | of (q : QualifiedConstraint)
+  | cyclicAt (L : List Atom) (k : Nat)
+deriving DecidableEq
 
-    The set is *always inhabited* when `WF.Nonempty` (Theorem
-    `counterfactualDiagram_nonempty`). This formalizes the design goal
-    articulated in paper §5.2 line 1286-1287:
-    > "Users need to know *when* and *why* a conflict occurs, but a
-    >  partial visualization is often more informative than just a
-    >  textual report of conflicting constraints." -/
-def counterfactualDiagram (P : Program) : Set Realization :=
-  { R | ∃ M, IsMFS P M ∧ R ∈ denotes M }
+def holds (R : Realization) : Rel → Prop
+  | .of q => modelsQC R q
+  | .cyclicAt L k => allPairs_ok R L k
 
-@[inherit_doc] notation "⟦" P "⟧₊" => counterfactualDiagram P
+/-- The well-formed realizations in which all relations of `K` hold. -/
+def relDenotes (K : Finset Rel) : Set Realization :=
+  { R | R ∈ WF ∧ ∀ r ∈ K, holds R r }
 
-@[simp] lemma mem_counterfactualDiagram {P : Program} {R : Realization} :
-    R ∈ ⟦P⟧₊ ↔ ∃ M, IsMFS P M ∧ R ∈ denotes M := Iff.rfl
+/-- A set of relations is feasible iff it has a realization. -/
+def RFeasible (K : Finset Rel) : Prop := (relDenotes K).Nonempty
 
-/-- Equivalent presentation of the diagram as a set-theoretic union over
-    the family of MFSes. Useful for relating to spytial-core's pipeline,
-    which materializes a *specific* MFS rather than the union — but the
-    union is the right *semantic* object. -/
-lemma counterfactualDiagram_eq_iUnion (P : Program) :
-    ⟦P⟧₊ = ⋃ M ∈ {M : Program | IsMFS P M}, denotes M := by
-  ext R
+lemma rfeasible_mono : Antimono RFeasible :=
+  fun _ _ h ⟨R, hWF, hR⟩ => ⟨R, hWF, fun r hr => hR r (h hr)⟩
+
+lemma rfeasible_empty (hWF : WF.Nonempty) : RFeasible ∅ :=
+  let ⟨R, hR⟩ := hWF
+  ⟨R, hR, fun _ hr => absurd hr (Finset.notMem_empty _)⟩
+
+--------------------------------------------------------------------------------
+-- 3. Units: the translation of each construct
+--------------------------------------------------------------------------------
+
+/-- A unit: a list of alternatives. Each alternative is a set of
+    relations. -/
+abbrev DUnit := List (Finset Rel)
+
+/-- A unit holds iff one of its alternatives holds. -/
+def modelsU (R : Realization) (u : DUnit) : Prop :=
+  ∃ alt ∈ u, ∀ r ∈ alt, holds R r
+
+/-- All relations of `l` are necessary: one unit for each relation. -/
+def must (l : List Rel) : List DUnit := l.map (fun r => [{r}])
+
+/-- One relation of `l` is sufficient: one unit, one alternative for
+    each relation. -/
+def oneOf (l : List Rel) : List DUnit := [l.map (fun r => {r})]
+
+/-- The unit of a cyclic path: one alternative for each offset. -/
+def cyclicUnit (L : List Atom) : DUnit :=
+  (List.range L.length).map (fun k => {Rel.cyclicAt L k})
+
+/-- The paths of a cyclic constraint that have more than two atoms. -/
+noncomputable def cyclicPaths (X : Selector₂) : Rotation → List (List Atom)
+  | .clockwise =>
+      (maximalSimplePaths X).filter (fun L => 2 < L.length)
+  | .counterclockwise =>
+      ((maximalSimplePaths X).map List.reverse).filter (fun L => 2 < L.length)
+
+/-- The units of a constraint that must hold. -/
+noncomputable def unitsAlways : Constraint → List DUnit
+  | .orientation X d =>
+      must (X.toList.map fun p => .of ⟨.orientation {p} d, .always⟩)
+  | .align X a =>
+      must (X.toList.map fun p => .of ⟨.align {p} a, .always⟩)
+  | .size w h S =>
+      must (S.toList.map fun a => .of ⟨.size w h {a}, .always⟩)
+  | .hideatom S =>
+      must (S.toList.map fun a => .of ⟨.hideatom {a}, .always⟩)
+  | .cyclic X rot => (cyclicPaths X rot).map cyclicUnit
+  | .group₁ S => must [.of ⟨.group₁ S, .always⟩]
+  | .group₂ X e => must [.of ⟨.group₂ X e, .always⟩]
+
+/-- The units of a constraint that must not hold. The negation of "all
+    pairs hold" is "some pair does not hold": one unit with one
+    alternative for each pair. -/
+noncomputable def unitsNever : Constraint → List DUnit
+  | .orientation X d =>
+      oneOf (X.toList.map fun p => .of ⟨.orientation {p} d, .never⟩)
+  | .align X a =>
+      oneOf (X.toList.map fun p => .of ⟨.align {p} a, .never⟩)
+  | .size w h S =>
+      oneOf (S.toList.map fun a => .of ⟨.size w h {a}, .never⟩)
+  | .hideatom S =>
+      oneOf (S.toList.map fun a => .of ⟨.hideatom {a}, .never⟩)
+  | .cyclic X rot => must [.of ⟨.cyclic X rot, .never⟩]
+  | .group₁ S => must [.of ⟨.group₁ S, .never⟩]
+  | .group₂ X e => must [.of ⟨.group₂ X e, .never⟩]
+
+/-- The units of a qualified constraint. -/
+noncomputable def units : QualifiedConstraint → List DUnit
+  | ⟨c, .always⟩ => unitsAlways c
+  | ⟨c, .never⟩ => unitsNever c
+
+/-- The units of a program. -/
+noncomputable def programUnits (P : Program) : List DUnit :=
+  P.toList.flatMap units
+
+/-! ### Each construct holds iff its units hold -/
+
+lemma lift₁_iff_singletons (R : Realization) (S : Selector₁)
+    (Pr : Box → Prop) : lift₁ R S Pr ↔ ∀ a ∈ S, lift₁ R {a} Pr := by
   constructor
-  · rintro ⟨M, hMFS, hRM⟩
-    refine Set.mem_iUnion.mpr ⟨M, ?_⟩
-    exact Set.mem_iUnion.mpr ⟨hMFS, hRM⟩
-  · intro hR
-    obtain ⟨M, hR'⟩ := Set.mem_iUnion.mp hR
-    obtain ⟨hMFS, hRM⟩ := Set.mem_iUnion.mp hR'
-    exact ⟨M, hMFS, hRM⟩
+  · intro h a ha
+    unfold lift₁
+    intro x hx
+    rw [Finset.mem_singleton] at hx
+    subst hx
+    exact h ha
+  · intro h
+    unfold lift₁
+    intro a ha
+    exact h a ha (Finset.mem_singleton_self _)
 
-/-- **Well-formedness.** Every realization in the diagram is well-formed
-    in the sense of `Main.lean`'s `WF` (paper §4.4, line 1162). This
-    rules out degenerate "diagrams" with overlapping or zero-area boxes
-    sneaking in through MFS relaxation. -/
-theorem counterfactualDiagram_sub_WF (P : Program) : ⟦P⟧₊ ⊆ WF := by
-  rintro R ⟨M, _, hRM⟩
-  exact denotes_sub_WF M hRM
+lemma lift₂_iff_singletons (R : Realization) (X : Selector₂)
+    (Pr : Box → Box → Prop) : lift₂ R X Pr ↔ ∀ p ∈ X, lift₂ R {p} Pr := by
+  constructor
+  · intro h p hp
+    unfold lift₂
+    intro a b hab
+    rw [Finset.mem_singleton] at hab
+    subst hab
+    exact h hp
+  · intro h
+    unfold lift₂
+    intro a b hab
+    exact h (a, b) hab (Finset.mem_singleton_self _)
 
-/-- **Soundness.** Every diagram realization satisfies *some* MFS of `P`.
-    Spytial-core never shows a diagram that fails to realize a maximally
-    feasible fragment of the user's spec — there is always a coherent
-    constraint subset behind the rendered diagram. -/
-theorem counterfactualDiagram_witnesses_MFS {P : Program} {R : Realization}
-    (hR : R ∈ ⟦P⟧₊) : ∃ M, IsMFS P M ∧ R ∈ denotes M := hR
+lemma sat_orientation_iff_singletons (R : Realization) (X : Selector₂)
+    (d : Direction) :
+    sat_orientation R X d ↔ ∀ p ∈ X, sat_orientation R {p} d := by
+  cases d <;> exact lift₂_iff_singletons R X _
 
-/-- **Fidelity (SAT case).** When `P` is feasible, the diagram coincides
-    with the standard denotation: spytial-core draws exactly the user's
-    spec, with nothing cut out.
+lemma sat_align_iff_singletons (R : Realization) (X : Selector₂)
+    (a : AlignDir) : sat_align R X a ↔ ∀ p ∈ X, sat_align R {p} a := by
+  cases a <;> exact lift₂_iff_singletons R X _
 
-    Paper §5.2 contrast: this is the "happy path" where the system does
-    *not* need to take the best-effort/relaxation route. -/
-theorem counterfactualDiagram_eq_denotes_of_feasible {P : Program}
-    (hSat : Feasible P) : ⟦P⟧₊ = denotes P := by
+lemma sat_size_iff_singletons (R : Realization) (w h : PosRat)
+    (S : Selector₁) : sat_size R w h S ↔ ∀ a ∈ S, sat_size R w h {a} :=
+  lift₁_iff_singletons R S _
+
+lemma sat_hide_iff_singletons (R : Realization) (S : Selector₁) :
+    sat_hide R S ↔ ∀ a ∈ S, sat_hide R {a} := by
+  simp [sat_hide]
+
+lemma must_iff (R : Realization) (l : List Rel) :
+    (∀ u ∈ must l, modelsU R u) ↔ ∀ r ∈ l, holds R r := by
+  simp [must, modelsU]
+
+lemma oneOf_iff (R : Realization) (l : List Rel) :
+    (∀ u ∈ oneOf l, modelsU R u) ↔ ∃ r ∈ l, holds R r := by
+  simp [oneOf, modelsU]
+
+lemma must_toList {β : Type*} (R : Realization) (S : Finset β)
+    (f : β → Rel) :
+    (∀ u ∈ must (S.toList.map f), modelsU R u) ↔ ∀ x ∈ S, holds R (f x) := by
+  rw [must_iff]; simp
+
+lemma oneOf_toList {β : Type*} (R : Realization) (S : Finset β)
+    (f : β → Rel) :
+    (∀ u ∈ oneOf (S.toList.map f), modelsU R u) ↔ ∃ x ∈ S, holds R (f x) := by
+  rw [oneOf_iff]; simp
+
+lemma must_single (R : Realization) (r : Rel) :
+    (∀ u ∈ must [r], modelsU R u) ↔ holds R r := by
+  rw [must_iff]; simp
+
+lemma not_forall_mem {β : Type*} {S : Finset β} {Q : β → Prop} :
+    (¬ ∀ x ∈ S, Q x) ↔ ∃ x ∈ S, ¬ Q x := by
+  push_neg; rfl
+
+lemma cyclicUnit_iff (R : Realization) (L : List Atom) :
+    modelsU R (cyclicUnit L) ↔ ∃ k, k < L.length ∧ allPairs_ok R L k := by
+  simp [cyclicUnit, modelsU, holds]
+
+lemma unitsAlways_correct (R : Realization) (c : Constraint) :
+    modelsC R c ↔ ∀ u ∈ unitsAlways c, modelsU R u := by
+  cases c with
+  | orientation X d =>
+    exact (sat_orientation_iff_singletons R X d).trans
+      (must_toList R X fun p => .of ⟨.orientation {p} d, .always⟩).symm
+  | align X a =>
+    exact (sat_align_iff_singletons R X a).trans
+      (must_toList R X fun p => .of ⟨.align {p} a, .always⟩).symm
+  | size w h S =>
+    exact (sat_size_iff_singletons R w h S).trans
+      (must_toList R S fun a => .of ⟨.size w h {a}, .always⟩).symm
+  | hideatom S =>
+    exact (sat_hide_iff_singletons R S).trans
+      (must_toList R S fun a => .of ⟨.hideatom {a}, .always⟩).symm
+  | group₁ S => exact (must_single R (.of ⟨.group₁ S, .always⟩)).symm
+  | group₂ X e => exact (must_single R (.of ⟨.group₂ X e, .always⟩)).symm
+  | cyclic X rot =>
+    cases rot with
+    | clockwise =>
+      show (∀ L ∈ maximalSimplePaths X, 2 < L.length →
+              ∃ k, k < L.length ∧ allPairs_ok R L k) ↔
+           ∀ u ∈ ((maximalSimplePaths X).filter
+              (fun L => 2 < L.length)).map cyclicUnit, modelsU R u
+      constructor
+      · intro h u hu
+        obtain ⟨L, hL, rfl⟩ := List.mem_map.mp hu
+        obtain ⟨hLm, hlen⟩ := List.mem_filter.mp hL
+        exact (cyclicUnit_iff R L).mpr (h L hLm (of_decide_eq_true hlen))
+      · intro h L hLm hlen
+        exact (cyclicUnit_iff R L).mp (h _ (List.mem_map.mpr
+          ⟨L, List.mem_filter.mpr ⟨hLm, decide_eq_true hlen⟩, rfl⟩))
+    | counterclockwise =>
+      show (∀ L ∈ maximalSimplePaths X, 2 < L.reverse.length →
+              ∃ k, k < L.reverse.length ∧ allPairs_ok R L.reverse k) ↔
+           ∀ u ∈ (((maximalSimplePaths X).map List.reverse).filter
+              (fun L => 2 < L.length)).map cyclicUnit, modelsU R u
+      constructor
+      · intro h u hu
+        obtain ⟨L, hL, rfl⟩ := List.mem_map.mp hu
+        obtain ⟨hLm, hlen⟩ := List.mem_filter.mp hL
+        obtain ⟨L₀, hL₀, rfl⟩ := List.mem_map.mp hLm
+        exact (cyclicUnit_iff R _).mpr (h L₀ hL₀ (of_decide_eq_true hlen))
+      · intro h L hLm hlen
+        exact (cyclicUnit_iff R _).mp (h _ (List.mem_map.mpr
+          ⟨L.reverse, List.mem_filter.mpr
+            ⟨List.mem_map.mpr ⟨L, hLm, rfl⟩, decide_eq_true hlen⟩, rfl⟩))
+
+lemma unitsNever_correct (R : Realization) (c : Constraint) :
+    modelsNegC R c ↔ ∀ u ∈ unitsNever c, modelsU R u := by
+  cases c with
+  | orientation X d =>
+    exact ((not_congr (sat_orientation_iff_singletons R X d)).trans
+      not_forall_mem).trans
+      (oneOf_toList R X fun p => .of ⟨.orientation {p} d, .never⟩).symm
+  | align X a =>
+    exact ((not_congr (sat_align_iff_singletons R X a)).trans
+      not_forall_mem).trans
+      (oneOf_toList R X fun p => .of ⟨.align {p} a, .never⟩).symm
+  | size w h S =>
+    exact ((not_congr (sat_size_iff_singletons R w h S)).trans
+      not_forall_mem).trans
+      (oneOf_toList R S fun a => .of ⟨.size w h {a}, .never⟩).symm
+  | hideatom S =>
+    exact ((not_congr (sat_hide_iff_singletons R S)).trans
+      not_forall_mem).trans
+      (oneOf_toList R S fun a => .of ⟨.hideatom {a}, .never⟩).symm
+  | cyclic X rot => exact (must_single R (.of ⟨.cyclic X rot, .never⟩)).symm
+  | group₁ S => exact (must_single R (.of ⟨.group₁ S, .never⟩)).symm
+  | group₂ X e => exact (must_single R (.of ⟨.group₂ X e, .never⟩)).symm
+
+/-- **The translation is correct for each construct.** A qualified
+    constraint holds iff all its units hold. -/
+theorem units_correct (R : Realization) (q : QualifiedConstraint) :
+    modelsQC R q ↔ ∀ u ∈ units q, modelsU R u := by
+  obtain ⟨c, m⟩ := q
+  cases m with
+  | always => exact unitsAlways_correct R c
+  | never => exact unitsNever_correct R c
+
+/-- **The translation keeps the semantics.** The denotation of a program
+    is the set of well-formed realizations in which all its units hold. -/
+theorem denotes_eq_units (P : Program) :
+    denotes P = { R | R ∈ WF ∧ ∀ u ∈ programUnits P, modelsU R u } := by
   ext R
+  have h : modelsP R P ↔ ∀ u ∈ programUnits P, modelsU R u := by
+    constructor
+    · intro h u hu
+      obtain ⟨q, hq, huq⟩ := List.mem_flatMap.mp hu
+      exact (units_correct R q).mp (h q (Finset.mem_toList.mp hq)) u huq
+    · intro h q hq
+      exact (units_correct R q).mpr (fun u hu =>
+        h u (List.mem_flatMap.mpr ⟨q, Finset.mem_toList.mpr hq, hu⟩))
+  simp only [denotes, Set.mem_setOf_eq, h]
+
+--------------------------------------------------------------------------------
+-- 4. The greedy construction with committed alternatives
+--------------------------------------------------------------------------------
+
+open Classical in
+/-- The first alternative of `u` that is feasible together with `acc`. -/
+noncomputable def pick (acc : Finset Rel) (u : DUnit) : Option (Finset Rel) :=
+  u.find? (fun alt => decide (RFeasible (acc ∪ alt)))
+
+/-- Commit to the picked alternative, or drop the unit. -/
+noncomputable def step (acc : Finset Rel) (u : DUnit) : Finset Rel :=
+  match pick acc u with
+  | some alt => acc ∪ alt
+  | none => acc
+
+noncomputable def greedyFrom (acc : Finset Rel) (L : List DUnit) : Finset Rel :=
+  L.foldl step acc
+
+/-- **The kept relations.** Go through the units in sequence. For each
+    unit, commit to the first alternative that keeps the set feasible. -/
+noncomputable def greedy (L : List DUnit) : Finset Rel := greedyFrom ∅ L
+
+/-- `K` keeps the unit `u`: all relations of one alternative are in `K`. -/
+def Kept (K : Finset Rel) (u : DUnit) : Prop := ∃ alt ∈ u, alt ⊆ K
+
+lemma step_cases (acc : Finset Rel) (u : DUnit) :
+    (∃ alt ∈ u, RFeasible (acc ∪ alt) ∧ step acc u = acc ∪ alt) ∨
+    ((∀ alt ∈ u, ¬ RFeasible (acc ∪ alt)) ∧ step acc u = acc) := by
+  cases h : pick acc u with
+  | some alt =>
+    left
+    have hs : step acc u = acc ∪ alt := by simp [step, h]
+    unfold pick at h
+    exact ⟨alt, List.mem_of_find?_eq_some h,
+      by simpa using List.find?_some h, hs⟩
+  | none =>
+    right
+    have hs : step acc u = acc := by simp [step, h]
+    unfold pick at h
+    refine ⟨fun alt halt => ?_, hs⟩
+    simpa using List.find?_eq_none.mp h alt halt
+
+lemma subset_step (acc : Finset Rel) (u : DUnit) : acc ⊆ step acc u := by
+  rcases step_cases acc u with ⟨alt, _, _, h⟩ | ⟨_, h⟩ <;> rw [h]
+  exact Finset.subset_union_left
+
+lemma step_feasible {acc : Finset Rel} (u : DUnit) (h : RFeasible acc) :
+    RFeasible (step acc u) := by
+  rcases step_cases acc u with ⟨alt, _, hF, hs⟩ | ⟨_, hs⟩ <;> rw [hs]
+  · exact hF
+  · exact h
+
+lemma greedyFrom_cons (acc : Finset Rel) (u : DUnit) (us : List DUnit) :
+    greedyFrom acc (u :: us) = greedyFrom (step acc u) us := rfl
+
+lemma subset_greedyFrom (acc : Finset Rel) (L : List DUnit) :
+    acc ⊆ greedyFrom acc L := by
+  induction L generalizing acc with
+  | nil => exact subset_refl acc
+  | cons u us ih =>
+    rw [greedyFrom_cons]
+    exact (subset_step acc u).trans (ih _)
+
+lemma greedyFrom_feasible {acc : Finset Rel} (L : List DUnit)
+    (h : RFeasible acc) : RFeasible (greedyFrom acc L) := by
+  induction L generalizing acc with
+  | nil => exact h
+  | cons u us ih =>
+    rw [greedyFrom_cons]
+    exact ih (step_feasible u h)
+
+lemma greedyFrom_head (acc : Finset Rel) (u : DUnit) (us : List DUnit) :
+    Kept (greedyFrom acc (u :: us)) u ∨
+    ∀ alt ∈ u, ¬ RFeasible (greedyFrom acc (u :: us) ∪ alt) := by
+  rw [greedyFrom_cons]
+  rcases step_cases acc u with ⟨alt, halt, _, hs⟩ | ⟨hnone, _⟩
+  · left
+    have h : alt ⊆ step acc u := by rw [hs]; exact Finset.subset_union_right
+    exact ⟨alt, halt, h.trans (subset_greedyFrom _ _)⟩
+  · right
+    intro alt halt hF
+    exact hnone alt halt (rfeasible_mono
+      (Finset.union_subset_union_left
+        ((subset_step acc u).trans (subset_greedyFrom _ _))) hF)
+
+lemma greedyFrom_dichotomy (acc : Finset Rel) (L : List DUnit) :
+    ∀ u ∈ L, Kept (greedyFrom acc L) u ∨
+      ∀ alt ∈ u, ¬ RFeasible (greedyFrom acc L ∪ alt) := by
+  induction L generalizing acc with
+  | nil => intro u hu; cases hu
+  | cons v vs ih =>
+    intro u hu
+    rcases List.mem_cons.mp hu with huv | hu'
+    · rw [huv]; exact greedyFrom_head acc v vs
+    · rw [greedyFrom_cons]; exact ih _ u hu'
+
+lemma mem_greedyFrom (acc : Finset Rel) (L : List DUnit) :
+    ∀ r ∈ greedyFrom acc L, r ∈ acc ∨ ∃ u ∈ L, ∃ alt ∈ u, r ∈ alt := by
+  induction L generalizing acc with
+  | nil => intro r hr; exact Or.inl hr
+  | cons u us ih =>
+    intro r hr
+    rw [greedyFrom_cons] at hr
+    rcases ih _ r hr with h | ⟨u', hu', alt, halt, hr'⟩
+    · rcases step_cases acc u with ⟨alt, halt, _, hs⟩ | ⟨_, hs⟩
+      · rw [hs] at h
+        rcases Finset.mem_union.mp h with h | h
+        · exact Or.inl h
+        · exact Or.inr ⟨u, List.mem_cons.mpr (Or.inl rfl), alt, halt, h⟩
+      · rw [hs] at h
+        exact Or.inl h
+    · exact Or.inr ⟨u', List.mem_cons.mpr (Or.inr hu'), alt, halt, hr'⟩
+
+/-- **The kept relations have a realization.** Thus there is always a
+    diagram to show. -/
+theorem greedy_feasible (L : List DUnit) (hWF : WF.Nonempty) :
+    RFeasible (greedy L) :=
+  greedyFrom_feasible L (rfeasible_empty hWF)
+
+/-- **Each unit is kept, or all its alternatives are blocked.** If a
+    unit is dropped, each of its alternatives conflicts with the kept
+    relations. -/
+theorem greedy_dichotomy (L : List DUnit) {u : DUnit} (hu : u ∈ L) :
+    Kept (greedy L) u ∨ ∀ alt ∈ u, ¬ RFeasible (greedy L ∪ alt) :=
+  greedyFrom_dichotomy ∅ L u hu
+
+/-- A kept unit holds in each realization of the kept relations. -/
+theorem kept_unit_satisfied {K : Finset Rel} {u : DUnit} (hu : Kept K u)
+    {R : Realization} (hR : R ∈ relDenotes K) : modelsU R u :=
+  let ⟨alt, halt, hsub⟩ := hu
+  ⟨alt, halt, fun r hr => hR.2 r (hsub hr)⟩
+
+/-- **A constraint with all units kept is satisfied.** -/
+theorem kept_constraint_satisfied {K : Finset Rel} {q : QualifiedConstraint}
+    (hq : ∀ u ∈ units q, Kept K u) {R : Realization}
+    (hR : R ∈ relDenotes K) : modelsQC R q :=
+  (units_correct R q).mpr (fun u hu => kept_unit_satisfied (hq u hu) hR)
+
+/-- **A violated constraint has a dropped unit.** -/
+theorem violated_has_dropped_unit {K : Finset Rel} {q : QualifiedConstraint}
+    {R : Realization} (hR : R ∈ relDenotes K) (hViol : ¬ modelsQC R q) :
+    ∃ u ∈ units q, ¬ Kept K u := by
+  by_contra hNo
+  push_neg at hNo
+  exact hViol (kept_constraint_satisfied hNo hR)
+
+/-- **With one alternative for each unit, the result is an MFS.** For
+    relations that are all necessary (`orientation`, `align`, `size`,
+    `hideatom`), the kept set is a Maximal Feasible Subset of the
+    relations, for each sequence. -/
+theorem greedy_must_isMFS (l : List Rel) (hWF : WF.Nonempty) :
+    IsMFS RFeasible l.toFinset (greedy (must l)) := by
+  refine ⟨?_, greedy_feasible _ hWF, ?_⟩
+  · intro r hr
+    rcases mem_greedyFrom ∅ (must l) r hr with h | ⟨u, hu, alt, halt, hr'⟩
+    · exact absurd h (Finset.notMem_empty r)
+    · obtain ⟨r', hr'l, rfl⟩ := List.mem_map.mp hu
+      rw [List.mem_singleton] at halt
+      rw [halt, Finset.mem_singleton] at hr'
+      rw [hr']
+      exact List.mem_toFinset.mpr hr'l
+  · intro c hc hcK hF
+    have hu : [{c}] ∈ must l :=
+      List.mem_map.mpr ⟨c, List.mem_toFinset.mp hc, rfl⟩
+    rcases greedy_dichotomy (must l) hu with ⟨alt, halt, hsub⟩ | hBlocked
+    · rw [List.mem_singleton] at halt
+      rw [halt] at hsub
+      exact hcK (hsub (Finset.mem_singleton_self c))
+    · refine hBlocked {c} (List.mem_singleton.mpr rfl) (rfeasible_mono ?_ hF)
+      intro x hx
+      simp only [Finset.mem_union, Finset.mem_singleton, Finset.mem_insert]
+        at hx ⊢
+      tauto
+
+--------------------------------------------------------------------------------
+-- 5. Two concrete programs
+--------------------------------------------------------------------------------
+
+/-- The relation "`a` is left of `b`". -/
+def leftOfRel (a b : Atom) : Rel :=
+  .of ⟨.orientation {(a, b)} .right, .always⟩
+
+/-- `a` in a unit box at the origin, `b` in a unit box two units to the
+    right. All other atoms are hidden. -/
+def twoBoxes (a b : Atom) : Realization := fun x =>
+  if x = a then some ⟨0, 0, 1, 1, by norm_num, by norm_num⟩
+  else if x = b then some ⟨2, 0, 1, 1, by norm_num, by norm_num⟩
+  else none
+
+lemma twoBoxes_some (a b x : Atom) (bx : Box) (h : twoBoxes a b x = some bx) :
+    (x = a ∧ bx.x_tl = 0 ∧ bx.width = 1) ∨
+    (x = b ∧ bx.x_tl = 2 ∧ bx.width = 1) := by
+  unfold twoBoxes at h
+  split_ifs at h <;>
+    first
+      | (left; cases h; exact ⟨‹x = a›, rfl, rfl⟩)
+      | (right; cases h; exact ⟨‹x = b›, rfl, rfl⟩)
+
+lemma twoBoxes_wf (a b : Atom) : twoBoxes a b ∈ WF := by
+  refine ⟨fun _ bx _ => ⟨bx.width_pos, bx.height_pos⟩, ?_, ?_⟩
+  · intro a₁ a₂ b₁ b₂ hne h1 h2
+    rcases twoBoxes_some a b a₁ b₁ h1 with ⟨e1, x1, w1⟩ | ⟨e1, x1, w1⟩ <;>
+    rcases twoBoxes_some a b a₂ b₂ h2 with ⟨e2, x2, w2⟩ | ⟨e2, x2, w2⟩
+    · exact absurd (e1.trans e2.symm) hne
+    · intro h
+      obtain ⟨⟨_, h'⟩, _⟩ := h
+      linarith
+    · intro h
+      obtain ⟨⟨h', _⟩, _⟩ := h
+      linarith
+    · exact absurd (e1.trans e2.symm) hne
+  · intro a₁ a₂ bx hne h1 h2
+    rcases twoBoxes_some a b a₁ bx h1 with ⟨e1, x1, _⟩ | ⟨e1, x1, _⟩ <;>
+    rcases twoBoxes_some a b a₂ bx h2 with ⟨e2, x2, _⟩ | ⟨e2, x2, _⟩
+    · exact absurd (e1.trans e2.symm) hne
+    · linarith
+    · linarith
+    · exact absurd (e1.trans e2.symm) hne
+
+lemma leftOfRel_feasible (a b : Atom) (hab : a ≠ b) :
+    RFeasible {leftOfRel a b} := by
+  refine ⟨twoBoxes a b, twoBoxes_wf a b, fun r hr => ?_⟩
+  rw [Finset.mem_singleton] at hr
+  rw [hr]
+  show lift₂ (twoBoxes a b) {(a, b)} leftOf
+  unfold lift₂
+  intro x y hxy
+  rw [Finset.mem_singleton, Prod.mk.injEq] at hxy
+  obtain ⟨rfl, rfl⟩ := hxy
+  refine ⟨⟨0, 0, 1, 1, by norm_num, by norm_num⟩,
+          ⟨2, 0, 1, 1, by norm_num, by norm_num⟩, ?_, ?_, ?_⟩
+  · simp [twoBoxes]
+  · simp [twoBoxes, hab.symm]
+  · simp [leftOf]
+
+lemma leftOf_both_absurd {R : Realization} {a b : Atom}
+    (h1 : lift₂ R {(a, b)} leftOf) (h2 : lift₂ R {(b, a)} leftOf) : False := by
+  obtain ⟨ba, bb, hba, hbb, hL⟩ := h1 (Finset.mem_singleton_self _)
+  obtain ⟨bb', ba', hbb', hba', hR⟩ := h2 (Finset.mem_singleton_self _)
+  rw [hba] at hba'; cases hba'
+  rw [hbb] at hbb'; cases hbb'
+  exact leftOf_asymm (le_of_lt ba.width_pos) (le_of_lt bb.width_pos) hL hR
+
+lemma leftOfRel_both_infeasible (a b : Atom) :
+    ¬ RFeasible {leftOfRel a b, leftOfRel b a} := by
+  rintro ⟨R, _, hR⟩
+  exact leftOf_both_absurd
+    (hR (leftOfRel a b) (by simp)) (hR (leftOfRel b a) (by simp))
+
+/-- **A part is kept, a part is dropped.** Let the program be the one
+    constraint "`a` is left of `b` and `b` is left of `a`", with `a ≠ b`.
+    Its units are the two relations `leftOfRel a b` and `leftOfRel b a`.
+
+    * With the source constraint as the unit, the only MFS is empty: the
+      diagram shows nothing of the constraint.
+    * With the relation as the unit, each MFS keeps one relation and
+      drops the other. -/
+theorem partial_keep (a b : Atom) (hab : a ≠ b) :
+    (∀ M, IsMFS (fun P : Program => (denotes P).Nonempty)
+        {⟨.orientation {(a, b), (b, a)} .right, .always⟩} M → M = ∅) ∧
+    (∀ D, IsMFS RFeasible {leftOfRel a b, leftOfRel b a} D →
+        D.Nonempty ∧ D ≠ {leftOfRel a b, leftOfRel b a}) := by
   refine ⟨?_, ?_⟩
-  · rintro ⟨M, hMFS, hRM⟩
-    -- When P is feasible, the only MFS is P itself, so M = P.
-    rwa [mfs_unique_of_feasible hSat hMFS] at hRM
-  · intro hR
-    exact ⟨P, mfs_self_of_feasible hSat, hR⟩
+  · intro M hM
+    rcases Finset.subset_singleton_iff.mp hM.1 with h | h
+    · exact h
+    · exfalso
+      obtain ⟨R, _, hSat⟩ := hM.2.1
+      rw [h] at hSat
+      have hq : lift₂ R {(a, b), (b, a)} leftOf :=
+        hSat _ (Finset.mem_singleton_self _)
+      have hp := (lift₂_iff_singletons R _ leftOf).mp hq
+      exact leftOf_both_absurd (hp (a, b) (by simp)) (hp (b, a) (by simp))
+  · intro D hD
+    refine ⟨?_, fun h => leftOfRel_both_infeasible a b (h ▸ hD.2.1)⟩
+    by_contra hEmpty
+    rw [Finset.not_nonempty_iff_eq_empty] at hEmpty
+    have hMax := hD.2.2 (leftOfRel a b) (by simp)
+      (by rw [hEmpty]; exact Finset.notMem_empty _)
+    rw [hEmpty] at hMax
+    exact hMax (by simpa using leftOfRel_feasible a b hab)
 
-/-- **Totality (UNSAT case).** Even when `P` is unsatisfiable, the diagram
-    is inhabited (provided `WF.Nonempty`).
-
-    *Why this matters.* This is the formal counterpart of the paper's
-    central design claim (§5.2 line 1286-1287): the system can *always*
-    show *some* diagram. Counterfactual rendering is a **total**
-    function from programs to drawings, in contrast to the
-    "reject unsatisfiable layouts" strategy (§5.2 line 1276-1280)
-    which is partial. -/
-theorem counterfactualDiagram_nonempty (P : Program) (hWF : WF.Nonempty) :
-    (⟦P⟧₊).Nonempty := by
-  obtain ⟨M, hMFS⟩ := mfs_exists P hWF
-  obtain ⟨R, hRM⟩ := hMFS.feasible
-  exact ⟨R, M, hMFS, hRM⟩
-
---------------------------------------------------------------------------------
--- 6. Counterfactual Report (IIS-family-based explanation)         (paper §5.2)
---------------------------------------------------------------------------------
-
-/-- The **counterfactual report** of `P` is the family of all its IISes.
-    This is the **explanation overlay** the user reads alongside the
-    diagram — paper §5.2's *Diagram Element* and *Constraint* levels
-    (lines 1355-1358):
-
-    > "Diagram Element level: Express the conflict textually as concrete
-    >  relations between atoms related to the variables involved in the IIS.
-    >  Constraint level: Report the constraints behind the conflicting
-    >  diagram-element relations."
-
-    In `spytial-core`, this corresponds to the
-    `conflictingConstraints` field on `CounterfactualLayoutResult`.
-
-    Two behaviours follow:
-    * **SAT case** — `P` feasible: the report is empty (nothing to
-      explain). Theorem `counterfactualReport_empty_iff_feasible`.
-    * **UNSAT case** — `P` infeasible: the report contains every
-      minimal contradictory core in `P`. -/
-def counterfactualReport (P : Program) : Set Program :=
-  { I | IsIIS P I }
-
-@[simp] lemma mem_counterfactualReport {P I : Program} :
-    I ∈ counterfactualReport P ↔ IsIIS P I := Iff.rfl
-
-/-- **Report is empty iff the program is feasible.** This is the IIS-side
-    analogue of `counterfactualDiagram_eq_denotes_of_feasible`: when the
-    spec is fine, there's nothing to report. -/
-theorem counterfactualReport_empty_iff_feasible (P : Program) :
-    counterfactualReport P = ∅ ↔ Feasible P := by
-  constructor
-  · intro hEmpty
-    by_contra hUnsat
-    obtain ⟨I, hI⟩ := iis_exists_of_infeasible P hUnsat
-    have : I ∈ counterfactualReport P := hI
-    rw [hEmpty] at this
-    exact absurd this (Set.notMem_empty I)
-  · intro hSat
-    rw [Set.eq_empty_iff_forall_notMem]
-    intro I hI
-    exact no_iis_of_feasible hSat ⟨I, hI⟩
-
-/-- **Report is nonempty iff the program is unsatisfiable.** Direct
-    reformulation of `counterfactualReport_empty_iff_feasible`. -/
-theorem counterfactualReport_nonempty_iff_unsat (P : Program) :
-    (counterfactualReport P).Nonempty ↔ ¬ Feasible P := by
-  rw [Set.nonempty_iff_ne_empty]
-  constructor
-  · intro hNe hFeas
-    exact hNe ((counterfactualReport_empty_iff_feasible P).mpr hFeas)
-  · intro hUnsat hEmpty
-    exact hUnsat ((counterfactualReport_empty_iff_feasible P).mp hEmpty)
-
-/-- **Restatement of duality, joint form.** For any MFS `M` and any IIS
-    `I` in the report, the diagram's drop-set `P \ M` intersects `I`.
-    Every constraint in the conflict explanation is also a candidate
-    for the cut. This connects the diagram (MFS) and the report (IIS)
-    via the bridge theorem `mfs_hits_every_iis`. -/
-theorem diagram_drop_meets_every_report_entry
-    {P M I : Program} (hMFS : IsMFS P M) (hI : I ∈ counterfactualReport P) :
-    ((P \ M) ∩ I).Nonempty := by
-  obtain ⟨c, hcI, hcM⟩ := mfs_hits_every_iis hMFS hI
-  exact ⟨c, Finset.mem_inter.mpr
-    ⟨Finset.mem_sdiff.mpr ⟨hI.subset hcI, hcM⟩, hcI⟩⟩
-
---------------------------------------------------------------------------------
--- 7. The "Cut Out" Set                                  (paper §5.2 "relaxing")
---------------------------------------------------------------------------------
-
-/-- The constraints **dropped** from the rendered diagram: `P` minus the
-    chosen MFS. Exactly what `spytial-core`'s qualitative validator
-    removes from `layout.constraints` before solving the geometry
-    (see `layoutinstance.ts:1424-1425`).
-
-    *Asymmetry from the paper's IIS approach.* Paper §5.2 line 1353
-    relaxes a single IIS `I` and renders from `P \ I`. **This is not
-    the same as MFS-removal**: `P \ I` is not in general feasible, since
-    other IISes in `P` (disjoint from `I` or overlapping but distinct)
-    may persist (see `iis_removal_can_remain_infeasible` above).
-    MFS-removal is strictly stronger — it yields `M`, which is feasible
-    by definition.
-
-    The drop-set is what the diagram throws away; the *report* (above)
-    tells the user *why* via the IIS family. -/
-def droppedConstraints (P M : Program) : Program := P \ M
-
-/-- **Nothing is dropped iff the program is feasible.** A clean
-    correspondence between syntax (the drop set) and semantics
-    (feasibility of the spec). Mirrors `counterfactualReport_empty_iff_feasible`
-    on the diagram side. -/
-lemma dropped_empty_iff_feasible {P M : Program} (hMFS : IsMFS P M) :
-    droppedConstraints P M = ∅ ↔ Feasible P := by
-  unfold droppedConstraints
-  refine ⟨fun hEmpty => ?_, fun hSat => ?_⟩
-  · -- ⇒  P \ M = ∅ means P ⊆ M; combined with M ⊆ P (MFS), gives M = P,
-    --   so M's feasibility is P's feasibility.
-    rw [Finset.sdiff_eq_empty_iff_subset] at hEmpty
-    have hMP : M = P := Finset.Subset.antisymm hMFS.subset hEmpty
-    rw [← hMP]; exact hMFS.feasible
-  · -- ⇐  P feasible ⇒ the only MFS is P itself, so M = P and P \ M = ∅.
-    rw [mfs_unique_of_feasible hSat hMFS]
-    exact Finset.sdiff_self P
-
---------------------------------------------------------------------------------
--- Worked example: a concrete UNSAT program produces an IIS, an MFS, a
--- non-empty diagram, AND a non-empty report.
---------------------------------------------------------------------------------
-
-/-- **Concrete instance.** A 2-constraint program requiring the same
-    nonempty selector `X` to be both `left` and `right` is UNSAT
-    (Main.lean's `opposite_orientation_unsat`). Our semantics gives,
-    for this `P`:
-
-    * a witness IIS, equivalently a non-empty report
-      (`iis_exists_of_infeasible` / `counterfactualReport_nonempty_iff_unsat`),
-    * an MFS (`mfs_exists`), and
-    * a non-empty diagram set `⟦P⟧₊` (`counterfactualDiagram_nonempty`).
-
-    This exercises the full diagram + report API end-to-end on a
-    paper-known UNSAT pattern (paper §5.2, "Reporting Unsatisfiable
-    Diagrams"). -/
-example (X : Selector₂) (hNE : X.Nonempty) (hWF : WF.Nonempty) :
-    let P : Program := {⟨.orientation X .left, .always⟩,
-                        ⟨.orientation X .right, .always⟩}
-    (counterfactualReport P).Nonempty ∧
-    (∃ M, IsMFS P M) ∧
-    (⟦P⟧₊).Nonempty := by
-  intro P
-  -- P is UNSAT by Main.lean's opposite_orientation_unsat.
-  have hL : (⟨.orientation X .left, .always⟩ : QualifiedConstraint) ∈ P :=
-    Finset.mem_insert_self _ _
-  have hR : (⟨.orientation X .right, .always⟩ : QualifiedConstraint) ∈ P :=
-    Finset.mem_insert_of_mem (Finset.mem_singleton.mpr rfl)
-  have hEmpty : denotes P = ∅ := opposite_orientation_unsat P X hL hR hNE
-  have hUnsat : ¬ Feasible P := by
-    unfold Feasible; rw [hEmpty]; exact Set.not_nonempty_empty
-  exact ⟨(counterfactualReport_nonempty_iff_unsat P).mpr hUnsat,
-         mfs_exists P hWF,
-         counterfactualDiagram_nonempty P hWF⟩
-
---------------------------------------------------------------------------------
--- Summary
---------------------------------------------------------------------------------
-
--- Feasibility (paper §4.4)
-#check Feasible                                -- (denotes P).Nonempty
-#check empty_feasible_iff                      -- Feasible ∅ ↔ WF.Nonempty
-
--- IIS — paper §5.1
-#check IsIIS                                   -- subset-minimal infeasible
-#check iis_exists_of_infeasible                -- ¬Feasible P ⇒ ∃ I, IsIIS P I
-#check no_iis_of_feasible                      -- Feasible P ⇒ no IIS
-#check unsat_iff_exists_iis                    -- ¬Feasible P ↔ ∃ IIS
-#check iis_subset_of_infeasible                -- every infeasible Q ⊆ P contains an IIS
-
--- MFS — dual of IIS
-#check IsMFS                                   -- subset-maximal feasible
-#check mfs_exists                              -- under WF.Nonempty, ∃ MFS
-#check mfs_self_of_feasible                    -- Feasible P ⇒ P is an MFS
-#check mfs_unique_of_feasible                  -- Feasible P ⇒ P is THE MFS
-
--- Duality & MFS/IIS asymmetry
-#check mfs_hits_every_iis                      -- ∀ IIS, ∃ dropped constraint in it
-#check iis_complement_is_hitting_set           -- restated: I ∩ (P\M) is nonempty
-#check dropped_belongs_to_some_iis             -- ∀ dropped constraint, ∃ IIS containing it
-#check mfs_kept_is_feasible                    -- MFS-keeping always yields feasibility
-#check iis_removal_can_remain_infeasible       -- IIS-removal does NOT, in general
-
--- Diagram — paper §5.2 "Layout level" (MFS-based)
-#check counterfactualDiagram                   -- ⟦P⟧₊
-#check counterfactualDiagram_sub_WF            -- ⟦P⟧₊ ⊆ WF
-#check counterfactualDiagram_witnesses_MFS     -- soundness
-#check counterfactualDiagram_eq_denotes_of_feasible  -- SAT: ⟦P⟧₊ = ⟦P⟧
-#check counterfactualDiagram_nonempty          -- UNSAT: still inhabited (totality)
-
--- Report — paper §5.2 "Diagram Element / Constraint levels" (IIS-based)
-#check counterfactualReport                    -- { I | IsIIS P I }
-#check counterfactualReport_empty_iff_feasible  -- SAT: report empty
-#check counterfactualReport_nonempty_iff_unsat  -- UNSAT: report nonempty
-#check diagram_drop_meets_every_report_entry   -- diagram drop hits every report entry
-
--- Cut-out set
-#check droppedConstraints                      -- P \ M
-#check dropped_empty_iff_feasible              -- nothing dropped iff feasible
+/-- **The commitment is not maximal.** The first unit has two
+    alternatives: "`a` is left of `b`" or "`b` is left of `a`". The
+    second unit has one: "`b` is left of `a`". The greedy pass commits to
+    the first alternative of the first unit, and then it must drop the
+    second unit. But the two units can hold together. -/
+theorem commit_not_maximal (a b : Atom) (hab : a ≠ b) :
+    greedy [[{leftOfRel a b}, {leftOfRel b a}], [{leftOfRel b a}]]
+      = {leftOfRel a b} ∧
+    ∃ R ∈ WF, modelsU R [{leftOfRel a b}, {leftOfRel b a}] ∧
+              modelsU R [{leftOfRel b a}] := by
+  refine ⟨?_, ?_⟩
+  · have hA : RFeasible (∅ ∪ {leftOfRel a b}) := by
+      simpa using leftOfRel_feasible a b hab
+    have hAB : ¬ RFeasible ({leftOfRel a b} ∪ {leftOfRel b a}) := by
+      rw [← Finset.insert_eq]; exact leftOfRel_both_infeasible a b
+    have h1 : step ∅ [{leftOfRel a b}, {leftOfRel b a}] = {leftOfRel a b} := by
+      have hp : pick ∅ [{leftOfRel a b}, {leftOfRel b a}]
+          = some {leftOfRel a b} := by
+        unfold pick
+        exact List.find?_cons_of_pos (by simpa using hA)
+      simp [step, hp]
+    have h2 : step {leftOfRel a b} [{leftOfRel b a}] = {leftOfRel a b} := by
+      rcases step_cases {leftOfRel a b} [{leftOfRel b a}] with
+        ⟨alt, halt, hF, _⟩ | ⟨_, hs⟩
+      · rw [List.mem_singleton] at halt
+        rw [halt] at hF
+        exact absurd hF hAB
+      · exact hs
+    show step (step ∅ _) _ = _
+    rw [h1, h2]
+  · obtain ⟨R, hWF, hR⟩ := leftOfRel_feasible b a hab.symm
+    exact ⟨R, hWF, ⟨{leftOfRel b a}, by simp, hR⟩, ⟨{leftOfRel b a}, by simp, hR⟩⟩
 
 end Counterfactual
 end Spytial

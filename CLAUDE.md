@@ -14,8 +14,7 @@ Or use `./check.sh` which does both.
 ## Structure
 
 - **Main.lean** — core mechanization: definitions and theorems (no `sorry`)
-- **Counterfactuals.lean** — MFS / IIS and UNSAT-diagram semantics (no `sorry`)
-- **DiagramMFS.lean** — the MFS at the diagram-element level, as `spytial-core` constructs it: pairwise relations are kept or dropped, so a part of one source constraint can stay (no `sorry`)
+- **Counterfactuals.lean** — the diagram for an UNSAT program: units, alternatives and relations for each construct, the greedy construction of `spytial-core`, and a general MFS / IIS theory (no `sorry`)
 - **CyclicConjecture.lean** — the one open proof (`cyclic_cw_ccw_unsat`, has a `sorry`). Not a default build target and nothing depends on it; build with `lake build CyclicConjecture`
 - **lakefile.lean** — Lake build config (depends on mathlib4, batteries)
 - **lean-toolchain** — pinned Lean version (v4.24.0)
@@ -49,12 +48,15 @@ All proofs are kernel-checked by `lake build`. The default targets contain no `s
 - `opposite_orientation_unsat` — left + right = ∅
 - `opposite_vertical_unsat` — above + below = ∅
 
-**Diagram-level MFS (`DiagramMFS.lean`):**
-- `denotes_atomize` — ⟦atomize P⟧ = ⟦P⟧ (splitting into pairwise relations keeps the semantics)
-- `diagramMFS_refines` — each constraint-level MFS is contained in a diagram-level MFS
-- `greedy_isMFS` / `greedy_isDiagramMFS` — the greedy pass gives an MFS
-- `uncontested_atom_kept` — a relation in no IIS is in every diagram-level MFS
-- `partial_keep_witness` — a program where a part of a constraint is kept and a part is dropped
+**UNSAT diagrams (`Counterfactuals.lean`):**
+- `units_correct` — each construct holds iff all its units hold
+- `greedy_feasible` — the kept relations have a realization
+- `greedy_dichotomy` — each unit is kept, or all its alternatives conflict with the kept relations
+- `kept_constraint_satisfied` — a constraint with all units kept is satisfied
+- `greedy_must_isMFS` — with one alternative for each unit, the kept set is an MFS of the relations
+- `dropped_in_some_iis`, `uncontested_kept`, `feasible_hits_every_iis` — relation between kept relations and IISes
+- `partial_keep` — a part of a constraint is kept and a part is dropped
+- `commit_not_maximal` — the commitment to one alternative can drop a compatible unit
 
 **Open (outside the default build, in `CyclicConjecture.lean`):**
 - `cyclic_cw_ccw_unsat` — CW + CCW = ∅ (sorry: geometric core)
