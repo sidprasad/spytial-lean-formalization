@@ -1,8 +1,7 @@
 /-
 # Spytial: Spatial Semantics
 * A program is a finite set of qualified spytial constraints.
-* Each constraint carries a `HoldsMode` — currently `always` or `never` —
-  mirroring the YAML `hold:` field and leaving room for future modalities.
+* Each constraint carries the YAML `hold:` qualifier, `always` or `never`.
 * The denotation of a program is the set of well-formed realizations
   that satisfy those qualified constraints.
 -/
@@ -131,23 +130,13 @@ inductive Constraint where
 | hideatom    : Selector₁ → Constraint
 deriving DecidableEq
 
-/--
-Modal qualifier for constraints, mirroring the YAML `hold:` field.
-Currently supports `always` (default) and `never` (negation).
-Designed to be extensible for future modalities.
--/
+/-- The YAML `hold:` qualifier on a source constraint. -/
 inductive HoldsMode where
   | always
   | never
-  -- future: | sometimes | eventually | ...
 deriving DecidableEq, Repr
 
-/--
-A constraint paired with its modal qualifier. This replaces the former
-`SignedConstraint` type, aligning with spytial-core where each
-`ConstraintOperation` carries a `negated : boolean` field, and
-with the YAML syntax `hold: never`.
--/
+/-- A source constraint with its `hold:` qualifier. -/
 structure QualifiedConstraint where
   constraint : Constraint
   holds : HoldsMode := .always
@@ -215,22 +204,24 @@ noncomputable def nextMap (X : Selector₂) : Atom → List Atom :=
     X.toList.foldl (fun acc (a,b) => acc.insert a (b :: acc.getD a [])) {}
   fun a => m.getD a []
 
-/-- All simple directed paths from `start`, length-bounded by the number of
-    distinct nodes in `univ`.
-
-    We include a `fuel : Nat` argument as a structural recursion measure.
-    Lean requires that each recursive call is made on a syntactically smaller
-    argument. The true termination argument is that simple paths cannot
-    repeat nodes, so their length is bounded by `|univ|`. Using `fuel` with
-    `fuel - 1` in each call provides Lean with the decreasing measure needed
-    to accept the recursion. -/
+/-- Follow simple directed paths from `start`. A path ends at a sink or before revisiting an
+    atom. Its length is bounded by the number of distinct atoms in `univ`. -/
 def simplePathsFrom (start : Atom) (succ : Atom → List Atom) (univ : Finset Atom) :
   List (List Atom) :=
-  let rec dfs (cur : Atom) (vis : List Atom) (fuel : Nat) : List (List Atom) :=
-    if fuel = 0 then [vis.reverse]
-    else if vis.contains cur then [vis.reverse]
-    else (succ cur).flatMap (fun n => dfs n (cur :: vis) (fuel - 1))
+  let rec dfs (cur : Atom) (vis : List Atom) : Nat → List (List Atom)
+    | 0 => [vis.reverse]
+    | fuel + 1 =>
+      if vis.contains cur then [vis.reverse]
+      else match succ cur with
+        | [] => [(cur :: vis).reverse]
+        | neighbors => neighbors.flatMap (fun n => dfs n (cur :: vis) fuel)
   dfs start [] univ.card
+
+-- The chain 0 → 1 → 2 includes the last atom even though it has no successor.
+example :
+    let path : List Atom := [⟨0⟩, ⟨1⟩, ⟨2⟩]
+    let succ := fun a : Atom => if a.id < 2 then [⟨a.id + 1⟩] else []
+    simplePathsFrom ⟨0⟩ succ path.toFinset = [path] := by decide +kernel
 
 /-- Boolean version for filtering. -/
 def contigSubpathB (X Y : List Atom) : Bool :=
@@ -308,7 +299,7 @@ noncomputable def sat_cyclic (R : Realization) (X : Selector₂) (rot : Rotation
 -- Satisfaction Predicates
 --------------------------------------------------------------------------------
 
-/-- Per-constraint satisfaction predicate (positive / `holds: always`). -/
+/-- Per-constraint satisfaction predicate (positive / `hold: always`). -/
 def modelsC (R : Realization) : Constraint → Prop
 | .orientation X d => sat_orientation      R X d
 | .align       X a => sat_align       R X a
@@ -318,7 +309,7 @@ def modelsC (R : Realization) : Constraint → Prop
 | .group₂      X _ => sat_group₂_core R X
 | .cyclic      X r => sat_cyclic      R X r
 
-/-- Never-cyclic: on each path, no offset gives the circle layout. -/
+/-- With `hold: never`, each eligible path must fail the cyclic constraint at every rotation. -/
 noncomputable def sat_never_cyclic (R : Realization) (X : Selector₂)
     (rot : Rotation) : Prop :=
   match rot with
@@ -329,14 +320,13 @@ noncomputable def sat_never_cyclic (R : Realization) (X : Selector₂)
       ∀ L ∈ maximalSimplePaths X, 2 < L.reverse.length →
         ∀ k, k < L.reverse.length → ¬ allPairs_ok R L.reverse k
 
-/-- Negated constraint satisfaction (`holds: never`).
+/-- Negated constraint satisfaction (`hold: never`).
 
-    For `orientation`, `align` and `cyclic`, `never` applies to **each**
-    element of the selector: no pair is in the relation, and no path is on
-    a circle. This is how spytial-core translates a negated constraint,
-    and it is stronger than the logical negation of the full constraint
-    ("some pair is not in the relation"). The two are the same for a
-    selector with one pair (`pureNeg_orientation_singleton`).
+    For `orientation` and `align`, no selected pair may satisfy the positive constraint.
+    For `cyclic`, no eligible maximal path may satisfy it at any rotation.
+    For instance, unequal top edges suffice for a pair of visible boxes to satisfy
+    `never` horizontal alignment. The diagram-element constraints in Counterfactuals
+    require one box to be above the other; this implies unequal top edges.
 
     For the other constraints, `never` is the logical negation. -/
 def modelsNegC (R : Realization) : Constraint → Prop
