@@ -32,17 +32,19 @@ All proofs are kernel-checked by `lake build`. The default targets contain no `s
 
 **Unsatisfiability:**
 - `unsat_iff_empty` — unsatisfiability iff empty denotation
-- `always_never_unsat` — contradictory modes → ⟦P⟧ = ∅
+- `always_never_unsat` — `always` and `never` for one constraint → ⟦P⟧ = ∅, if the two modes exclude each other (true for a non-empty selector: `orientation_exclusive`, `align_exclusive`)
 
 **Negation:**
-- `pure_neg_exhaustive/exclusive` — modelsC partitions realizations
+- `modelsNegC` — for `orientation`, `align`, `cyclic`, `never` applies to each pair or path (no pair is in the relation), as in spytial-core; for the other constraints it is the logical negation
+- `PureNeg c` — `never` is the logical negation for `c` (true for a one-pair selector, `size`, `hideatom`, groups)
+- `pure_neg_exhaustive/exclusive` — for `PureNeg c`, the two modes partition the realizations
 
 **Entailment:**
 - `entails_iff_subset` — semantic entailment = denotation inclusion
 - `constraint_redundant` — entailed constraints are no-ops
 
 **Closure:**
-- `denoteDiff_decompose` — ⟦P⟧ \ ⟦Q⟧ = ⋃ q ∈ Q, ⟦P ∪ {flip q}⟧
+- `denoteDiff_decompose` — ⟦P⟧ \ ⟦Q⟧ = ⋃ q ∈ Q, ⟦P ∪ {flip q}⟧, for `Q` with `PureNeg` constraints
 
 **Constraint contradictions:**
 - `opposite_orientation_unsat` — left + right = ∅

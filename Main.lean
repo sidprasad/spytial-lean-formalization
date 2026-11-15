@@ -318,10 +318,32 @@ def modelsC (R : Realization) : Constraint → Prop
 | .group₂      X _ => sat_group₂_core R X
 | .cyclic      X r => sat_cyclic      R X r
 
+/-- Never-cyclic: on each path, no offset gives the circle layout. -/
+noncomputable def sat_never_cyclic (R : Realization) (X : Selector₂)
+    (rot : Rotation) : Prop :=
+  match rot with
+  | .clockwise =>
+      ∀ L ∈ maximalSimplePaths X, 2 < L.length →
+        ∀ k, k < L.length → ¬ allPairs_ok R L k
+  | .counterclockwise =>
+      ∀ L ∈ maximalSimplePaths X, 2 < L.reverse.length →
+        ∀ k, k < L.reverse.length → ¬ allPairs_ok R L.reverse k
+
 /-- Negated constraint satisfaction (`holds: never`).
-    Negation is the precise logical ¬ of the positive predicate. -/
+
+    For `orientation`, `align` and `cyclic`, `never` applies to **each**
+    element of the selector: no pair is in the relation, and no path is on
+    a circle. This is how spytial-core translates a negated constraint,
+    and it is stronger than the logical negation of the full constraint
+    ("some pair is not in the relation"). The two are the same for a
+    selector with one pair (`pureNeg_orientation_singleton`).
+
+    For the other constraints, `never` is the logical negation. -/
 def modelsNegC (R : Realization) : Constraint → Prop
-| c => ¬ modelsC R c
+| .orientation X d => ∀ p ∈ X, ¬ sat_orientation R {p} d
+| .align X a       => ∀ p ∈ X, ¬ sat_align R {p} a
+| .cyclic X r      => sat_never_cyclic R X r
+| c                => ¬ modelsC R c
 
 /--
 Satisfaction for qualified constraints.  Dispatches to `modelsC` or
@@ -476,54 +498,134 @@ theorem compose_eq_inter (P Q : Program) :
       · exact hSatQ c h⟩
 
 --------------------------------------------------------------------------------
--- Pure Negation: Contradiction and Complement
+-- Selectors: a lifted relation holds on each element separately
 --------------------------------------------------------------------------------
 
-/-- Exhaustiveness: every realization satisfies one mode. -/
-theorem pure_neg_exhaustive (c : Constraint)
+lemma lift₁_iff_singletons (R : Realization) (S : Selector₁)
+    (Pr : Box → Prop) : lift₁ R S Pr ↔ ∀ a ∈ S, lift₁ R {a} Pr := by
+  constructor
+  · intro h a ha
+    unfold lift₁
+    intro x hx
+    rw [Finset.mem_singleton] at hx
+    subst hx
+    exact h ha
+  · intro h
+    unfold lift₁
+    intro a ha
+    exact h a ha (Finset.mem_singleton_self _)
+
+lemma lift₂_iff_singletons (R : Realization) (X : Selector₂)
+    (Pr : Box → Box → Prop) : lift₂ R X Pr ↔ ∀ p ∈ X, lift₂ R {p} Pr := by
+  constructor
+  · intro h p hp
+    unfold lift₂
+    intro a b hab
+    rw [Finset.mem_singleton] at hab
+    subst hab
+    exact h hp
+  · intro h
+    unfold lift₂
+    intro a b hab
+    exact h (a, b) hab (Finset.mem_singleton_self _)
+
+lemma sat_orientation_iff_singletons (R : Realization) (X : Selector₂)
+    (d : Direction) :
+    sat_orientation R X d ↔ ∀ p ∈ X, sat_orientation R {p} d := by
+  cases d <;> exact lift₂_iff_singletons R X _
+
+lemma sat_align_iff_singletons (R : Realization) (X : Selector₂)
+    (a : AlignDir) : sat_align R X a ↔ ∀ p ∈ X, sat_align R {p} a := by
+  cases a <;> exact lift₂_iff_singletons R X _
+
+lemma sat_size_iff_singletons (R : Realization) (w h : PosRat)
+    (S : Selector₁) : sat_size R w h S ↔ ∀ a ∈ S, sat_size R w h {a} :=
+  lift₁_iff_singletons R S _
+
+lemma sat_hide_iff_singletons (R : Realization) (S : Selector₁) :
+    sat_hide R S ↔ ∀ a ∈ S, sat_hide R {a} := by
+  simp [sat_hide]
+
+--------------------------------------------------------------------------------
+-- Negation: `never` against `always`
+--------------------------------------------------------------------------------
+
+/-- `never` is the logical negation of `always` for the constraint `c`.
+
+    This is true for a constraint on one pair, and for `size`,
+    `hideatom` and the group constraints. It is not true for
+    `orientation` or `align` on a selector with more than one pair: when
+    some pairs are in the relation and some are not, the constraint holds
+    in no mode. -/
+def PureNeg (c : Constraint) : Prop := ∀ R, modelsNegC R c ↔ ¬ modelsC R c
+
+lemma pureNeg_orientation_singleton (p : Atom × Atom) (d : Direction) :
+    PureNeg (.orientation {p} d) := fun R => by simp [modelsNegC, modelsC]
+
+lemma pureNeg_align_singleton (p : Atom × Atom) (a : AlignDir) :
+    PureNeg (.align {p} a) := fun R => by simp [modelsNegC, modelsC]
+
+lemma pureNeg_size (w h : PosRat) (S : Selector₁) : PureNeg (.size w h S) :=
+  fun _ => Iff.rfl
+
+lemma pureNeg_hideatom (S : Selector₁) : PureNeg (.hideatom S) :=
+  fun _ => Iff.rfl
+
+lemma pureNeg_group₁ (S : Selector₁) : PureNeg (.group₁ S) := fun _ => Iff.rfl
+
+lemma pureNeg_group₂ (X : Selector₂) (e : Bool) : PureNeg (.group₂ X e) :=
+  fun _ => Iff.rfl
+
+/-- Exhaustiveness: if `never` is the logical negation for `c`, each
+    realization satisfies one mode. -/
+theorem pure_neg_exhaustive (c : Constraint) (hc : PureNeg c)
     (R : Realization) : modelsC R c ∨ modelsNegC R c := by
   by_cases h : modelsC R c
   · exact Or.inl h
-  · exact Or.inr h
+  · exact Or.inr ((hc R).mpr h)
 
-/-- Exclusivity: no realization satisfies both modes. -/
-theorem pure_neg_exclusive (c : Constraint)
+/-- Exclusivity: if `never` is the logical negation for `c`, no
+    realization satisfies the two modes. -/
+theorem pure_neg_exclusive (c : Constraint) (hc : PureNeg c)
     (R : Realization) : ¬ (modelsC R c ∧ modelsNegC R c) :=
-  fun ⟨hPos, hNeg⟩ => hNeg hPos
+  fun ⟨hPos, hNeg⟩ => (hc R).mp hNeg hPos
 
-/-- A program with both `holds: always` and `holds: never` for the
-    same constraint is unsatisfiable. -/
+/-- For a non-empty selector, no realization satisfies an orientation
+    constraint in the two modes. -/
+theorem orientation_exclusive {X : Selector₂} (d : Direction)
+    (hNE : X.Nonempty) (R : Realization) :
+    ¬ (modelsC R (.orientation X d) ∧ modelsNegC R (.orientation X d)) := by
+  obtain ⟨p, hp⟩ := hNE
+  exact fun ⟨hPos, hNeg⟩ =>
+    hNeg p hp ((sat_orientation_iff_singletons R X d).mp hPos p hp)
+
+/-- For a non-empty selector, no realization satisfies an alignment
+    constraint in the two modes. -/
+theorem align_exclusive {X : Selector₂} (a : AlignDir)
+    (hNE : X.Nonempty) (R : Realization) :
+    ¬ (modelsC R (.align X a) ∧ modelsNegC R (.align X a)) := by
+  obtain ⟨p, hp⟩ := hNE
+  exact fun ⟨hPos, hNeg⟩ =>
+    hNeg p hp ((sat_align_iff_singletons R X a).mp hPos p hp)
+
+/-- A program with `holds: always` and `holds: never` for the same
+    constraint is unsatisfiable, if the two modes exclude each other. -/
 theorem always_never_unsat (P : Program) (c : Constraint)
+    (hEx : ∀ R, ¬ (modelsC R c ∧ modelsNegC R c))
     (hA : ⟨c, .always⟩ ∈ P) (hN : ⟨c, .never⟩ ∈ P) :
     denotes P = ∅ := by
   apply unsat_empty
   intro R _ hSat
-  exact pure_neg_exclusive c R ⟨hSat _ hA, hSat _ hN⟩
+  exact hEx R ⟨hSat _ hA, hSat _ hN⟩
 
-/-- Complement intersection: ⟦{c, always}⟧ ∩ ⟦{c, never}⟧ = ∅. -/
-lemma pure_neg_complement_inter (c : Constraint) :
-    denotes {⟨c, .always⟩} ∩ denotes {⟨c, .never⟩} = ∅ := by
-  ext R
-  simp only [Set.mem_inter_iff, Set.mem_empty_iff_false, iff_false]
-  intro ⟨hA, hN⟩
-  simp only [denotes, modelsP, Set.mem_setOf] at hA hN
-  obtain ⟨_, hSatA⟩ := hA
-  obtain ⟨_, hSatN⟩ := hN
-  exact pure_neg_exclusive c R
-    ⟨hSatA _ (Finset.mem_singleton.mpr rfl), hSatN _ (Finset.mem_singleton.mpr rfl)⟩
-
---------------------------------------------------------------------------------
--- Orientation Contradiction
---------------------------------------------------------------------------------
-
-/-- With pure negation, a program requiring both `holds: always` and
-    `holds: never` for the same orientation constraint is unsatisfiable.
-    This is now a direct corollary of `always_never_unsat`. -/
-lemma orientation_always_never_unsat (P : Program) (X : Selector₂) (d : Direction)
+/-- An orientation constraint on a non-empty selector, in the two modes,
+    is unsatisfiable. -/
+lemma orientation_always_never_unsat (P : Program) (X : Selector₂)
+    (d : Direction) (hNE : X.Nonempty)
     (hA : ⟨.orientation X d, .always⟩ ∈ P)
     (hN : ⟨.orientation X d, .never⟩ ∈ P) :
     denotes P = ∅ :=
-  always_never_unsat P (.orientation X d) hA hN
+  always_never_unsat P (.orientation X d) (orientation_exclusive d hNE) hA hN
 
 --------------------------------------------------------------------------------
 -- Set Difference Decomposition
@@ -545,12 +647,15 @@ def flipMode : QualifiedConstraint → QualifiedConstraint
 | ⟨c, .always⟩ => ⟨c, .never⟩
 | ⟨c, .never⟩  => ⟨c, .always⟩
 
-/-- Flipping mode negates satisfaction. -/
-lemma flipMode_neg (q : QualifiedConstraint) (R : Realization) :
+/-- Flipping the mode negates satisfaction, if `never` is the logical
+    negation for the constraint. -/
+lemma flipMode_neg (q : QualifiedConstraint) (hq : PureNeg q.constraint)
+    (R : Realization) :
     modelsQC R (flipMode q) ↔ ¬ modelsQC R q := by
   rcases q with ⟨c, (_ | _)⟩
-  · exact Iff.rfl
-  · exact not_not.symm
+  · exact hq R
+  · exact ⟨fun h hN => (hq R).mp hN h,
+           fun h => by by_contra hC; exact h ((hq R).mpr hC)⟩
 
 /-- **Set difference decomposition.**
 
@@ -559,8 +664,13 @@ lemma flipMode_neg (q : QualifiedConstraint) (R : Realization) :
     Each summand adds the negation of one specific constraint from Q.
     This shows that the denotation algebra is closed under set difference
     up to finite union (which programs cannot express internally, since
-    programs are conjunctive). -/
-theorem denoteDiff_decompose (P Q : Program) :
+    programs are conjunctive).
+
+    The constraints of `Q` must have `never` as their logical negation
+    (`PureNeg`). This is true when each orientation and alignment
+    constraint of `Q` is on one pair. -/
+theorem denoteDiff_decompose (P Q : Program)
+    (hQ : ∀ q ∈ Q, PureNeg q.constraint) :
     denoteDiff P Q = ⋃ q ∈ Q, denotes (P ∪ {flipMode q}) := by
   ext R
   simp only [denoteDiff, Set.mem_diff, Set.mem_iUnion₂]
@@ -575,13 +685,13 @@ theorem denoteDiff_decompose (P Q : Program) :
     rcases Finset.mem_union.mp hc with hP | hF
     · exact hRP.2 c hP
     · rw [Finset.mem_singleton.mp hF]
-      exact (flipMode_neg q R).mpr hNeg
+      exact (flipMode_neg q (hQ q hqQ) R).mpr hNeg
   · -- Reverse: ∃ q ∈ Q, R ∈ ⟦P ∪ {flipMode q}⟧ → R ∈ ⟦P⟧ ∧ R ∉ ⟦Q⟧
     intro ⟨q, hqQ, hWF, hSat⟩
     refine ⟨⟨hWF, fun c hc => hSat c (Finset.mem_union_left _ hc)⟩, ?_⟩
     intro ⟨_, hMQ⟩
     have hFlip := hSat (flipMode q) (Finset.mem_union_right _ (Finset.mem_singleton.mpr rfl))
-    rw [flipMode_neg q R] at hFlip
+    rw [flipMode_neg q (hQ q hqQ) R] at hFlip
     exact hFlip (hMQ q hqQ)
 
 /-- **Under-approximation of set difference.** For any q ∈ Q,
@@ -589,23 +699,23 @@ theorem denoteDiff_decompose (P Q : Program) :
     If R satisfies flip(q), it violates q, so `modelsP R Q` fails.
     -/
 lemma denoteDiff_approx (P Q : Program) (q : QualifiedConstraint)
-    (hq : q ∈ Q) :
+    (hq : q ∈ Q) (hPure : PureNeg q.constraint) :
     denotes (P ∪ {flipMode q}) ⊆ denoteDiff P Q := by
   intro R hR
   refine ⟨antimonotonicity Finset.subset_union_left hR, ?_⟩
   intro ⟨_, hSatQ⟩
   obtain ⟨_, hSatPF⟩ := hR
   have hFlip := hSatPF (flipMode q) (Finset.mem_union_right _ (Finset.mem_singleton.mpr rfl))
-  exact ((flipMode_neg q R).mp hFlip) (hSatQ q hq)
+  exact ((flipMode_neg q hPure R).mp hFlip) (hSatQ q hq)
 
 /-- **Existence of a program under-approximating set difference.**
     For any programs P and Q with q ∈ Q, there exists a program M whose
     denotation is contained in ⟦P⟧ \ ⟦Q⟧. Direct corollary of
     `denoteDiff_approx`. -/
 lemma denoteDiff_witness (P Q : Program)
-    (q : QualifiedConstraint) (hq : q ∈ Q) :
+    (q : QualifiedConstraint) (hq : q ∈ Q) (hPure : PureNeg q.constraint) :
     ∃ M : Program, denotes M ⊆ denoteDiff P Q :=
-  ⟨P ∪ {flipMode q}, denoteDiff_approx P Q q hq⟩
+  ⟨P ∪ {flipMode q}, denoteDiff_approx P Q q hq hPure⟩
 
 
 --------------------------------------------------------------------------------
@@ -925,8 +1035,10 @@ theorem opposite_vertical_unsat (P : Program) (X : Selector₂)
 #check always_never_unsat  -- always + never = ∅
 
 -- Negation
-#check pure_neg_exhaustive -- modelsC ∨ modelsNegC
-#check pure_neg_exclusive  -- ¬(modelsC ∧ modelsNegC)
+#check PureNeg             -- never is the logical negation for c
+#check pure_neg_exhaustive -- PureNeg c → modelsC ∨ modelsNegC
+#check pure_neg_exclusive  -- PureNeg c → ¬(modelsC ∧ modelsNegC)
+#check orientation_exclusive -- X non-empty → ¬(always ∧ never)
 
 -- Entailment
 #check entails_iff_subset  -- entails P q ↔ ⟦P⟧ ⊆ ⟦{q}⟧

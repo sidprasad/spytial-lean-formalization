@@ -18,8 +18,10 @@ alternatives holds.
 | `orientation`, `align` (always)   | one unit for each pair; one alternative                     |
 | `size`, `hideatom` (always)       | one unit for each atom; one alternative                     |
 | `cyclic` (always)                 | one unit for each path; one alternative for each offset `k` |
-| `orientation`, `align`, `size`, `hideatom` (never) | one unit; one alternative for each pair / atom |
-| `group₁`, `group₂` (always, never), `cyclic` (never) | one unit; one alternative (not decomposed) |
+| `orientation`, `align` (never)    | one unit for each pair; one alternative                     |
+| `cyclic` (never)                  | one unit for each path and offset; one alternative          |
+| `size`, `hideatom` (never)        | one unit; one alternative for each atom                     |
+| `group₁`, `group₂` (always, never) | one unit; one alternative (not decomposed)                 |
 
 `units_correct` proves, for each construct, that the constraint holds iff
 all its units hold.
@@ -203,15 +205,18 @@ end Generic
 
     * `of q` — a constraint on one pair or one atom, for example
       `orientation {(a,b)} right` ("a is left of b").
-    * `cyclicAt L k` — the path `L` is on a circle at offset `k`. -/
+    * `cyclicAt L k` — the path `L` is on a circle at offset `k`.
+    * `notCyclicAt L k` — the path `L` is not on a circle at offset `k`. -/
 inductive Rel where
   | of (q : QualifiedConstraint)
   | cyclicAt (L : List Atom) (k : Nat)
+  | notCyclicAt (L : List Atom) (k : Nat)
 deriving DecidableEq
 
 def holds (R : Realization) : Rel → Prop
   | .of q => modelsQC R q
   | .cyclicAt L k => allPairs_ok R L k
+  | .notCyclicAt L k => ¬ allPairs_ok R L k
 
 /-- The well-formed realizations in which all relations of `K` hold. -/
 def relDenotes (K : Finset Rel) : Set Realization :=
@@ -250,6 +255,11 @@ def oneOf (l : List Rel) : List DUnit := [l.map (fun r => {r})]
 def cyclicUnit (L : List Atom) : DUnit :=
   (List.range L.length).map (fun k => {Rel.cyclicAt L k})
 
+/-- The units of a path that must not be on a circle: one unit for each
+    offset. -/
+def notCyclicUnits (L : List Atom) : List DUnit :=
+  must ((List.range L.length).map (Rel.notCyclicAt L))
+
 /-- The paths of a cyclic constraint that have more than two atoms. -/
 noncomputable def cyclicPaths (X : Selector₂) : Rotation → List (List Atom)
   | .clockwise =>
@@ -271,19 +281,20 @@ noncomputable def unitsAlways : Constraint → List DUnit
   | .group₁ S => must [.of ⟨.group₁ S, .always⟩]
   | .group₂ X e => must [.of ⟨.group₂ X e, .always⟩]
 
-/-- The units of a constraint that must not hold. The negation of "all
-    pairs hold" is "some pair does not hold": one unit with one
-    alternative for each pair. -/
+/-- The units of a constraint that must not hold. For `orientation`,
+    `align` and `cyclic`, `never` applies to each pair or path, so each
+    one is a unit. For `size` and `hideatom`, `never` is the logical
+    negation: one unit with one alternative for each atom. -/
 noncomputable def unitsNever : Constraint → List DUnit
   | .orientation X d =>
-      oneOf (X.toList.map fun p => .of ⟨.orientation {p} d, .never⟩)
+      must (X.toList.map fun p => .of ⟨.orientation {p} d, .never⟩)
   | .align X a =>
-      oneOf (X.toList.map fun p => .of ⟨.align {p} a, .never⟩)
+      must (X.toList.map fun p => .of ⟨.align {p} a, .never⟩)
+  | .cyclic X rot => (cyclicPaths X rot).flatMap notCyclicUnits
   | .size w h S =>
       oneOf (S.toList.map fun a => .of ⟨.size w h {a}, .never⟩)
   | .hideatom S =>
       oneOf (S.toList.map fun a => .of ⟨.hideatom {a}, .never⟩)
-  | .cyclic X rot => must [.of ⟨.cyclic X rot, .never⟩]
   | .group₁ S => must [.of ⟨.group₁ S, .never⟩]
   | .group₂ X e => must [.of ⟨.group₂ X e, .never⟩]
 
@@ -297,51 +308,6 @@ noncomputable def programUnits (P : Program) : List DUnit :=
   P.toList.flatMap units
 
 /-! ### Each construct holds iff its units hold -/
-
-lemma lift₁_iff_singletons (R : Realization) (S : Selector₁)
-    (Pr : Box → Prop) : lift₁ R S Pr ↔ ∀ a ∈ S, lift₁ R {a} Pr := by
-  constructor
-  · intro h a ha
-    unfold lift₁
-    intro x hx
-    rw [Finset.mem_singleton] at hx
-    subst hx
-    exact h ha
-  · intro h
-    unfold lift₁
-    intro a ha
-    exact h a ha (Finset.mem_singleton_self _)
-
-lemma lift₂_iff_singletons (R : Realization) (X : Selector₂)
-    (Pr : Box → Box → Prop) : lift₂ R X Pr ↔ ∀ p ∈ X, lift₂ R {p} Pr := by
-  constructor
-  · intro h p hp
-    unfold lift₂
-    intro a b hab
-    rw [Finset.mem_singleton] at hab
-    subst hab
-    exact h hp
-  · intro h
-    unfold lift₂
-    intro a b hab
-    exact h (a, b) hab (Finset.mem_singleton_self _)
-
-lemma sat_orientation_iff_singletons (R : Realization) (X : Selector₂)
-    (d : Direction) :
-    sat_orientation R X d ↔ ∀ p ∈ X, sat_orientation R {p} d := by
-  cases d <;> exact lift₂_iff_singletons R X _
-
-lemma sat_align_iff_singletons (R : Realization) (X : Selector₂)
-    (a : AlignDir) : sat_align R X a ↔ ∀ p ∈ X, sat_align R {p} a := by
-  cases a <;> exact lift₂_iff_singletons R X _
-
-lemma sat_size_iff_singletons (R : Realization) (w h : PosRat)
-    (S : Selector₁) : sat_size R w h S ↔ ∀ a ∈ S, sat_size R w h {a} :=
-  lift₁_iff_singletons R S _
-
-lemma sat_hide_iff_singletons (R : Realization) (S : Selector₁) :
-    sat_hide R S ↔ ∀ a ∈ S, sat_hide R {a} := by
-  simp [sat_hide]
 
 lemma must_iff (R : Realization) (l : List Rel) :
     (∀ u ∈ must l, modelsU R u) ↔ ∀ r ∈ l, holds R r := by
@@ -368,6 +334,11 @@ lemma must_single (R : Realization) (r : Rel) :
 lemma not_forall_mem {β : Type*} {S : Finset β} {Q : β → Prop} :
     (¬ ∀ x ∈ S, Q x) ↔ ∃ x ∈ S, ¬ Q x := by
   push_neg; rfl
+
+lemma notCyclicUnits_iff (R : Realization) (L : List Atom) :
+    (∀ u ∈ notCyclicUnits L, modelsU R u) ↔
+      ∀ k, k < L.length → ¬ allPairs_ok R L k := by
+  rw [notCyclicUnits, must_iff]; simp [holds]
 
 lemma cyclicUnit_iff (R : Realization) (L : List Atom) :
     modelsU R (cyclicUnit L) ↔ ∃ k, k < L.length ∧ allPairs_ok R L k := by
@@ -425,13 +396,13 @@ lemma unitsNever_correct (R : Realization) (c : Constraint) :
     modelsNegC R c ↔ ∀ u ∈ unitsNever c, modelsU R u := by
   cases c with
   | orientation X d =>
-    exact ((not_congr (sat_orientation_iff_singletons R X d)).trans
-      not_forall_mem).trans
-      (oneOf_toList R X fun p => .of ⟨.orientation {p} d, .never⟩).symm
+    exact (forall₂_congr fun p _ =>
+        ((pureNeg_orientation_singleton p d) R).symm).trans
+      (must_toList R X fun p => .of ⟨.orientation {p} d, .never⟩).symm
   | align X a =>
-    exact ((not_congr (sat_align_iff_singletons R X a)).trans
-      not_forall_mem).trans
-      (oneOf_toList R X fun p => .of ⟨.align {p} a, .never⟩).symm
+    exact (forall₂_congr fun p _ =>
+        ((pureNeg_align_singleton p a) R).symm).trans
+      (must_toList R X fun p => .of ⟨.align {p} a, .never⟩).symm
   | size w h S =>
     exact ((not_congr (sat_size_iff_singletons R w h S)).trans
       not_forall_mem).trans
@@ -440,9 +411,42 @@ lemma unitsNever_correct (R : Realization) (c : Constraint) :
     exact ((not_congr (sat_hide_iff_singletons R S)).trans
       not_forall_mem).trans
       (oneOf_toList R S fun a => .of ⟨.hideatom {a}, .never⟩).symm
-  | cyclic X rot => exact (must_single R (.of ⟨.cyclic X rot, .never⟩)).symm
   | group₁ S => exact (must_single R (.of ⟨.group₁ S, .never⟩)).symm
   | group₂ X e => exact (must_single R (.of ⟨.group₂ X e, .never⟩)).symm
+  | cyclic X rot =>
+    cases rot with
+    | clockwise =>
+      show (∀ L ∈ maximalSimplePaths X, 2 < L.length →
+              ∀ k, k < L.length → ¬ allPairs_ok R L k) ↔
+           ∀ u ∈ ((maximalSimplePaths X).filter
+              (fun L => 2 < L.length)).flatMap notCyclicUnits, modelsU R u
+      constructor
+      · intro h u hu
+        obtain ⟨L, hL, huL⟩ := List.mem_flatMap.mp hu
+        obtain ⟨hLm, hlen⟩ := List.mem_filter.mp hL
+        exact (notCyclicUnits_iff R L).mpr
+          (h L hLm (of_decide_eq_true hlen)) u huL
+      · intro h L hLm hlen
+        exact (notCyclicUnits_iff R L).mp (fun u hu => h u
+          (List.mem_flatMap.mpr
+            ⟨L, List.mem_filter.mpr ⟨hLm, decide_eq_true hlen⟩, hu⟩))
+    | counterclockwise =>
+      show (∀ L ∈ maximalSimplePaths X, 2 < L.reverse.length →
+              ∀ k, k < L.reverse.length → ¬ allPairs_ok R L.reverse k) ↔
+           ∀ u ∈ (((maximalSimplePaths X).map List.reverse).filter
+              (fun L => 2 < L.length)).flatMap notCyclicUnits, modelsU R u
+      constructor
+      · intro h u hu
+        obtain ⟨L, hL, huL⟩ := List.mem_flatMap.mp hu
+        obtain ⟨hLm, hlen⟩ := List.mem_filter.mp hL
+        obtain ⟨L₀, hL₀, rfl⟩ := List.mem_map.mp hLm
+        exact (notCyclicUnits_iff R _).mpr
+          (h L₀ hL₀ (of_decide_eq_true hlen)) u huL
+      · intro h L hLm hlen
+        exact (notCyclicUnits_iff R _).mp (fun u hu => h u
+          (List.mem_flatMap.mpr
+            ⟨L.reverse, List.mem_filter.mpr
+              ⟨List.mem_map.mpr ⟨L, hLm, rfl⟩, decide_eq_true hlen⟩, hu⟩))
 
 /-- **The translation is correct for each construct.** A qualified
     constraint holds iff all its units hold. -/

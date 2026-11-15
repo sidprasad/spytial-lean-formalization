@@ -266,24 +266,23 @@ theorem always_orientation_implies_must
   }
 
 /-!
-### Note on `never` and `cannot`
+### `never` and `cannot`
 
-`holds: never` means `¬ sat_orientation R X d`, i.e., there exists some
-pair in X for which the relation fails.  This is weaker than saying
-*every* pair fails.  For a singleton selector `{(a, ref)}`, the
-equivalence is exact, and `never` does imply `cannot`.
+`holds: never` on an orientation constraint means that no pair of the
+selector is in the relation. Thus `never` gives `cannot` for each pair of
+the selector.
 -/
 
-/-- For singleton selectors, `holds: never` implies `cannot`. -/
-theorem never_orientation_singleton_implies_cannot
-    (P : Program) (d : Direction) (ref a : Atom)
-    (hIn : ⟨.orientation {(ref, a)} d, .never⟩ ∈ P)
+/-- `holds: never` implies `cannot` for each pair of the selector. -/
+theorem never_orientation_implies_cannot
+    (P : Program) (X : Selector₂) (d : Direction) (ref a : Atom)
+    (hIn : ⟨.orientation X d, .never⟩ ∈ P) (hPair : (ref, a) ∈ X)
     (hBasic : d = .left ∨ d = .right ∨ d = .above ∨ d = .below) :
     cannot P (directionToRel d) ref a := by
   intro ⟨R, ⟨_, hModels⟩, hRel⟩
-  have hSat := hModels ⟨.orientation {(ref, a)} d, .never⟩ hIn
-  simp only [modelsQC, modelsNegC, modelsC] at hSat
-  apply hSat
+  have hSat : modelsNegC R (.orientation X d) :=
+    hModels ⟨.orientation X d, .never⟩ hIn
+  apply hSat (ref, a) hPair
   rcases hBasic with rfl | rfl | rfl | rfl
   all_goals {
     simp only [atomRel, directionToRel] at hRel
@@ -319,6 +318,6 @@ theorem never_orientation_singleton_implies_cannot
 
 -- Connection to Constraint System
 #check @always_orientation_implies_must           -- holds:always → must
-#check @never_orientation_singleton_implies_cannot -- holds:never (singleton) → cannot
+#check @never_orientation_implies_cannot -- holds:never → cannot, for each pair
 
 end Spytial
