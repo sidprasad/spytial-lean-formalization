@@ -16,9 +16,11 @@ Positive translations preserve the source semantics in both directions. For
 `never`, core emits concrete alternatives. Each implies the source negation, but a
 box realization can satisfy the logical negation without satisfying any alternative.
 
-`greedy` takes disjunctions in a supplied order and tests feasibility by existence of
-a well-formed box realization. Core computes the order using its graph state.
-The results here describe the relations kept for a given order.
+The greedy construction below models the earlier recovery policy. Exact recovery now fixes
+one representative branch, counts its visible requirements, and searches by increasing
+deletion budget. A selected group side or never-group witness is a single requirement with
+several primitive relations. The generic theorem `first_repair_isMaximum` models the search
+given a downward-closed feasibility predicate and a valid conflict extractor.
 -/
 
 import Main
@@ -156,6 +158,91 @@ theorem iis_removal_insufficient (hmono : Antimono Feas) {P I₁ I₂ : Finset �
     (fun _ hc => Finset.mem_sdiff.mpr
       ⟨hI₂.1 hc, fun h => Finset.disjoint_left.mp hDisj h hc⟩) hF)
 
+/-- The most requirements that can hold on one fixed diagnostic branch. -/
+def IsMaximumFeasible (Feas : Finset α → Prop) (P M : Finset α) : Prop :=
+  M ⊆ P ∧ Feas M ∧ ∀ S ⊆ P, Feas S → S.card ≤ M.card
+
+/-- A bounded search leaf. At an infeasible node the implementation chooses one IIS
+    and explores deleting each of its members. The choice function need only return
+    an infeasible subset; shrinking it to an IIS reduces the search. -/
+def RepairLeaf (Feas : Finset α → Prop) (conflict : Finset α → Finset α) :
+    ℕ → Finset α → Finset α → Prop
+  | 0, P, M => Feas P ∧ M = P
+  | k + 1, P, M => (Feas P ∧ M = P) ∨
+      (¬ Feas P ∧ ∃ c ∈ conflict P, RepairLeaf Feas conflict k (P.erase c) M)
+
+variable {conflict : Finset α → Finset α}
+
+lemma repairLeaf_sound {k : ℕ} {P M : Finset α}
+    (h : RepairLeaf Feas conflict k P M) : M ⊆ P ∧ Feas M ∧ P.card ≤ M.card + k := by
+  induction k generalizing P with
+  | zero => obtain ⟨hf, rfl⟩ := h; exact ⟨subset_refl _, hf, by omega⟩
+  | succ k ih =>
+    rcases h with ⟨hf, rfl⟩ | ⟨_, c, _, leaf⟩
+    · exact ⟨subset_refl _, hf, by omega⟩
+    · obtain ⟨hs, hf, hc⟩ := ih leaf
+      have he : P.card ≤ (P.erase c).card + 1 := by
+        by_cases hm : c ∈ P
+        · rw [Finset.card_erase_of_mem hm]; omega
+        · simp [Finset.erase_eq_of_notMem hm]
+      exact ⟨hs.trans (P.erase_subset c), hf, by omega⟩
+
+/-- Every feasible target is contained in a leaf once its deletion budget is available. -/
+lemma repairLeaf_covers (mono : Antimono Feas)
+    (valid : ∀ P, ¬ Feas P → conflict P ⊆ P ∧ ¬ Feas (conflict P))
+    {P S : Finset α} (sub : S ⊆ P) (sat : Feas S) {k : ℕ} (budget : P.card ≤ S.card + k) :
+    ∃ M, RepairLeaf Feas conflict k P M ∧ S ⊆ M := by
+  induction k generalizing P with
+  | zero =>
+    have eq : S = P := Finset.eq_of_subset_of_card_le sub (by omega)
+    exact ⟨P, ⟨eq ▸ sat, rfl⟩, sub⟩
+  | succ k ih =>
+    by_cases hf : Feas P
+    · exact ⟨P, Or.inl ⟨hf, rfl⟩, sub⟩
+    · obtain ⟨inside, bad⟩ := valid P hf
+      have missing : ¬ conflict P ⊆ S := fun hs => bad (mono hs sat)
+      obtain ⟨c, hc, hmiss⟩ := Finset.not_subset.mp missing
+      have sub' : S ⊆ P.erase c := Finset.subset_erase.mpr ⟨sub, hmiss⟩
+      have smaller := Finset.card_erase_of_mem (inside hc)
+      obtain ⟨M, leaf, covers⟩ := ih sub' (by omega)
+      exact ⟨M, Or.inr ⟨hf, c, hc, leaf⟩, covers⟩
+
+/-- Increasing the budget from zero returns a maximum-cardinality feasible subset at
+    the first successful budget, independently of the order of IIS members. -/
+theorem first_repair_isMaximum (mono : Antimono Feas)
+    (valid : ∀ P, ¬ Feas P → conflict P ⊆ P ∧ ¬ Feas (conflict P))
+    {k : ℕ} {P M : Finset α} (leaf : RepairLeaf Feas conflict k P M)
+    (first : ∀ j < k, ¬ ∃ T, RepairLeaf Feas conflict j P T) : IsMaximumFeasible Feas P M := by
+  obtain ⟨sub, sat, budget⟩ := repairLeaf_sound leaf
+  refine ⟨sub, sat, ?_⟩
+  intro S hS hF
+  by_contra! larger
+  have hcard := Finset.card_le_card hS
+  obtain ⟨T, hT, _⟩ := repairLeaf_covers mono valid hS hF (k := P.card - S.card) (by omega)
+  exact first _ (by omega) ⟨T, hT⟩
+
+/-- If the empty set is feasible, the search has a successful budget at most
+    the size of the branch. Every leaf at the first such budget is optimal. -/
+theorem exists_first_repair (mono : Antimono Feas) (empty : Feas ∅)
+    (valid : ∀ P, ¬ Feas P → conflict P ⊆ P ∧ ¬ Feas (conflict P)) (P : Finset α) :
+    ∃ k ≤ P.card, (∃ M, RepairLeaf Feas conflict k P M) ∧
+      ∀ M, RepairLeaf Feas conflict k P M → IsMaximumFeasible Feas P M := by
+  classical
+  obtain ⟨M, leaf, _⟩ := repairLeaf_covers mono valid (Finset.empty_subset P) empty
+    (k := P.card) (by simp)
+  have atLast : ∃ T, RepairLeaf Feas conflict P.card P T := ⟨M, leaf⟩
+  have succeeds : ∃ k T, RepairLeaf Feas conflict k P T := ⟨P.card, atLast⟩
+  exact ⟨Nat.find succeeds, Nat.find_min' succeeds atLast, Nat.find_spec succeeds,
+    fun _ h => first_repair_isMaximum mono valid h (fun _ hj => Nat.find_min succeeds hj)⟩
+
+theorem IsMaximumFeasible.isMFS {P M : Finset α} (h : IsMaximumFeasible Feas P M) :
+    IsMFS Feas P M := by
+  refine ⟨h.1, h.2.1, ?_⟩
+  intro c hc hm feasible
+  have le := h.2.2 _ (Finset.insert_subset_iff.mpr ⟨hc, h.1⟩) feasible
+  rw [Finset.card_insert_of_notMem hm] at le
+  omega
+
 end Generic
 
 --------------------------------------------------------------------------------
@@ -189,6 +276,46 @@ lemma rfeasible_mono : Antimono RFeasible :=
 lemma rfeasible_empty (hWF : WF.Nonempty) : RFeasible ∅ :=
   let ⟨R, hR⟩ := hWF
   ⟨R, hR, fun _ hr => absurd hr (Finset.notMem_empty _)⟩
+
+/-- A fixed branch consists of distinct requirements. Each requirement is a conjunction
+    of primitive relations. All relations of a retained requirement must hold together. -/
+def BranchFeasible (P : Finset (Finset Rel)) : Prop := RFeasible (P.biUnion id)
+
+lemma branchFeasible_mono : Antimono BranchFeasible := by
+  intro P Q sub
+  apply rfeasible_mono
+  intro r hr
+  obtain ⟨u, hu, hr⟩ := Finset.mem_biUnion.mp hr
+  exact Finset.mem_biUnion.mpr ⟨u, sub hu, hr⟩
+
+theorem branch_maximum_hits_iis {P M I : Finset (Finset Rel)}
+    (maximum : IsMaximumFeasible BranchFeasible P M) (iis : IsIIS BranchFeasible P I) :
+    ∃ u ∈ I, u ∉ M := feasible_hits_every_iis branchFeasible_mono maximum.2.1 iis
+
+
+/-- The three-box row from the paper. If the group selects the two ends and
+    excludes the middle, its exact-containment requirement fails. Horizontal
+    alignment and equal box heights put the middle box within the vertical span. -/
+theorem row_middle_violates_exact_group {R : Realization} {S : Selector₁}
+    {a b c : Atom} {l m r : Box}
+    (ha : a ∈ S) (hb : b ∉ S) (hc : c ∈ S)
+    (la : R a = some l) (mb : R b = some m) (rc : R c = some r)
+    (lm : leftOf l m) (mr : leftOf m r) (row : aligned_h l m)
+    (height : m.height ≤ l.height) : ¬ sat_group₁_core R S := by
+  rintro ⟨g, exactMembers⟩
+  obtain ⟨lb, hl, containsL⟩ := (exactMembers a).2 ha
+  obtain ⟨rb, hr, containsR⟩ := (exactMembers c).2 hc
+  rw [la] at hl
+  rw [rc] at hr
+  cases hl
+  cases hr
+  apply hb ((exactMembers b).1 ⟨m, mb, ?_⟩)
+  rcases containsL with ⟨lx, ly, _, lbottom⟩
+  rcases containsR with ⟨_, _, rright, _⟩
+  unfold leftOf at lm mr
+  unfold aligned_h at row
+  exact ⟨by linarith [l.width_pos], by linarith, by linarith [r.width_pos], by linarith⟩
+
 
 --------------------------------------------------------------------------------
 -- 3. Translation to diagram-element constraints

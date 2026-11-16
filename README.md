@@ -57,8 +57,25 @@ This Lean file (`Main.lean`) formalizes:
 at the **diagram element level**. Orientation, alignment, and cyclic constraints give
 rise to relations between pairs of atoms. For example, `directlyRight` requires both
 a left/right order and horizontal alignment. When another constraint conflicts with
-the order, the counterfactual diagram can still satisfy the alignment. For a cyclic
-constraint, all pairwise relations for one rotation must hold together.
+the order, the counterfactual diagram can still satisfy the alignment.
+
+A counterfactual fixes one representative branch. Recovery may retain compatible parts of
+the selected cyclic rotation. The selected inclusion witness for a never-group counts as
+one requirement and can only be kept as a whole. A group-side relationship likewise
+counts once even when it generates multiple member inequalities.
+
+`BranchFeasible` interprets a branch as a finite set of requirements, each a conjunction of
+positional relations. `first_repair_isMaximum` proves that searching by increasing deletion
+budget on this branch finds a maximum-cardinality feasible subset. The search relies on
+downward-closed feasibility and on extracting an infeasible subset at each failure.
+`exists_first_repair` shows that a budget succeeds when the empty set is feasible.
+`branch_maximum_hits_iis` relates the retained set to every IIS on the branch. Branch
+selection, TypeScript graph feasibility and group compilation are outside this proof.
+
+In the three-box example, the rectangle must contain exactly 0 and 2. If the
+counterfactual keeps the equal-height row 0, 1, 2, every rectangle containing
+both endpoints also contains 1. `row_middle_violates_exact_group` proves that
+this violates the source-level group requirement.
 
 ## Theorems You Can Check
 
