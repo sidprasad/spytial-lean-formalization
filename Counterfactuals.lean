@@ -1,26 +1,22 @@
 /-
 # Counterfactual diagrams
 
-When the source rules conflict, the counterfactual diagram keeps a feasible subset
-of the diagram-element relations: left of, above, vertically aligned, or horizontally aligned.
-An alternative is a conjunction of these relations. A disjunction is a list of alternatives
-from which the diagram may take one. For example, `directlyRight` on (a, b)
-emits two independent constraints, while all the pair relations of one cyclic rotation
-belong to a single alternative.
+The counterfactual and its reported IIS use the same branch. A branch is a finite set
+of diagram-element requirements. A well-formed drawing is a counterfactual
+when it realizes a feasible subset of maximum cardinality on that branch (`IsCounterfactual`).
+Every such drawing violates at least one requirement from each IIS on the branch.
 
-`translate?` translates orientation, alignment, and cyclic rules. Size, hiding, and
-group boundaries have separate source semantics in Main; translating groups to
-positional constraints would also require the layout's membership and visible atoms.
+A requirement can contain several primitive relations. A selected group side counts once,
+as does the selected witness for a never-group. A cyclic rule selects a rotation, whose
+pairwise relations can be retained individually.
 
-Positive translations preserve the source semantics in both directions. For
-`never`, core emits concrete alternatives. Each implies the source negation, but a
-box realization can satisfy the logical negation without satisfying any alternative.
+`translate?` gives the diagram-element relations for orientation, alignment, and cyclic
+rules. Its positive translations preserve the source semantics in both directions. For
+`never`, each translated alternative implies the source negation. The source semantics
+of size, hiding, and groups are defined in Main.
 
-The greedy construction below models the earlier recovery policy. Exact recovery now fixes
-one representative branch, counts its visible requirements, and searches by increasing
-deletion budget. A selected group side or never-group witness is a single requirement with
-several primitive relations. The generic theorem `first_repair_isMaximum` models the search
-given a downward-closed feasibility predicate and a valid conflict extractor.
+`first_repair_isMaximum` proves that the first successful deletion budget yields a
+maximum-cardinality subset, given downward-closed feasibility and a valid conflict extractor.
 -/
 
 import Main
@@ -162,9 +158,8 @@ theorem iis_removal_insufficient (hmono : Antimono Feas) {P I₁ I₂ : Finset �
 def IsMaximumFeasible (Feas : Finset α → Prop) (P M : Finset α) : Prop :=
   M ⊆ P ∧ Feas M ∧ ∀ S ⊆ P, Feas S → S.card ≤ M.card
 
-/-- A bounded search leaf. At an infeasible node the implementation chooses one IIS
-    and explores deleting each of its members. The choice function need only return
-    an infeasible subset; shrinking it to an IIS reduces the search. -/
+/-- A feasible leaf reachable by at most the given number of deletions. Each deletion
+    removes a member of an infeasible subset of the remaining requirements. -/
 def RepairLeaf (Feas : Finset α → Prop) (conflict : Finset α → Finset α) :
     ℕ → Finset α → Finset α → Prop
   | 0, P, M => Feas P ∧ M = P
@@ -281,6 +276,12 @@ lemma rfeasible_empty (hWF : WF.Nonempty) : RFeasible ∅ :=
     of primitive relations. All relations of a retained requirement must hold together. -/
 def BranchFeasible (P : Finset (Finset Rel)) : Prop := RFeasible (P.biUnion id)
 
+/-- A counterfactual for an infeasible branch realizes a maximum-cardinality
+    feasible subset of its requirements. Every tied maximum is admissible. -/
+def IsCounterfactual (P : Finset (Finset Rel)) (R : Realization) : Prop :=
+  ¬ BranchFeasible P ∧
+    ∃ M, IsMaximumFeasible BranchFeasible P M ∧ R ∈ relDenotes (M.biUnion id)
+
 lemma branchFeasible_mono : Antimono BranchFeasible := by
   intro P Q sub
   apply rfeasible_mono
@@ -292,6 +293,31 @@ theorem branch_maximum_hits_iis {P M I : Finset (Finset Rel)}
     (maximum : IsMaximumFeasible BranchFeasible P M) (iis : IsIIS BranchFeasible P I) :
     ∃ u ∈ I, u ∉ M := feasible_hits_every_iis branchFeasible_mono maximum.2.1 iis
 
+/-- In a drawing of a maximum subset, the retained requirements are exactly those
+    requirements of the branch whose relations all hold in the drawing. -/
+theorem retained_iff_holds {P M : Finset (Finset Rel)} {R : Realization}
+    (maximum : IsMaximumFeasible BranchFeasible P M) (realizes : R ∈ relDenotes (M.biUnion id))
+    {u : Finset Rel} (hu : u ∈ P) : u ∈ M ↔ ∀ r ∈ u, holds R r := by
+  constructor
+  · intro member r hr
+    exact realizes.2 r (Finset.mem_biUnion.mpr ⟨u, member, hr⟩)
+  · intro allHold
+    by_contra omitted
+    apply maximum.isMFS.2.2 u hu omitted
+    refine ⟨R, realizes.1, ?_⟩
+    intro r hr
+    obtain ⟨v, hv, inRequirement⟩ := Finset.mem_biUnion.mp hr
+    rcases Finset.mem_insert.mp hv with same | member
+    · exact allHold r (same ▸ inRequirement)
+    · exact realizes.2 r (Finset.mem_biUnion.mpr ⟨v, member, inRequirement⟩)
+
+/-- Every counterfactual drawing violates a requirement in each IIS of its branch. -/
+theorem counterfactual_violates_each_iis {P I : Finset (Finset Rel)} {R : Realization}
+    (diagram : IsCounterfactual P R) (iis : IsIIS BranchFeasible P I) :
+    ∃ u ∈ I, ¬ (∀ r ∈ u, holds R r) := by
+  obtain ⟨_, M, maximum, realizes⟩ := diagram
+  obtain ⟨u, hu, omitted⟩ := branch_maximum_hits_iis maximum iis
+  exact ⟨u, hu, fun h => omitted ((retained_iff_holds maximum realizes (iis.1 hu)).2 h)⟩
 
 /-- The three-box row from the paper. If the group selects the two ends and
     excludes the middle, its exact-containment requirement fails. Horizontal
@@ -331,7 +357,7 @@ def modelsDisjunction (R : Realization) (u : Disjunction) : Prop :=
 /-- Each relation is required independently. -/
 def conjuncts (l : List Rel) : List Disjunction := l.map (fun r => [{r}])
 
-/-- The alternatives that `spytial-core` uses for `never` on one diagram-element relation. -/
+/-- Sufficient positional alternatives for the negation of one diagram-element relation. -/
 def negateRelation : Rel → List Rel
   | .left a b  => [.left b a, .aligned_v a b]
   | .above a b => [.above b a, .aligned_h a b]
@@ -571,128 +597,11 @@ theorem denotes_eq_translated {qs : List QualifiedConstraint} {ds : List Disjunc
   exact ⟨cs, hc, (translate_always_iff hc).mpr (hp _ (List.mem_toFinset.mpr hq))⟩
 
 --------------------------------------------------------------------------------
--- 4. The greedy construction with committed alternatives
+-- 4. Satisfaction of source constraints by the retained relations
 --------------------------------------------------------------------------------
 
-open Classical in
-/-- The first alternative of `u` that is feasible together with `acc`. -/
-noncomputable def pick (acc : Finset Rel) (u : Disjunction) : Option (Finset Rel) :=
-  u.find? (fun alt => decide (RFeasible (acc ∪ alt)))
-
-/-- Keep the selected alternative, or drop the disjunction if all alternatives conflict. -/
-noncomputable def step (acc : Finset Rel) (u : Disjunction) : Finset Rel :=
-  match pick acc u with
-  | some alt => acc ∪ alt
-  | none => acc
-
-noncomputable def greedyFrom (acc : Finset Rel) (L : List Disjunction) : Finset Rel :=
-  L.foldl step acc
-
-/-- Visit the disjunctions in sequence, keeping the first feasible branch of each. -/
-noncomputable def greedy (L : List Disjunction) : Finset Rel := greedyFrom ∅ L
-
-/-- `K` keeps a branch of the disjunction `u`: all relations of one alternative are in `K`. -/
+/-- The retained relations include a complete alternative of this disjunction. -/
 def Kept (K : Finset Rel) (u : Disjunction) : Prop := ∃ alt ∈ u, alt ⊆ K
-
-lemma step_cases (acc : Finset Rel) (u : Disjunction) :
-    (∃ alt ∈ u, RFeasible (acc ∪ alt) ∧ step acc u = acc ∪ alt) ∨
-    ((∀ alt ∈ u, ¬ RFeasible (acc ∪ alt)) ∧ step acc u = acc) := by
-  cases h : pick acc u with
-  | some alt =>
-    left
-    have hs : step acc u = acc ∪ alt := by simp [step, h]
-    unfold pick at h
-    exact ⟨alt, List.mem_of_find?_eq_some h,
-      by simpa using List.find?_some h, hs⟩
-  | none =>
-    right
-    have hs : step acc u = acc := by simp [step, h]
-    unfold pick at h
-    refine ⟨fun alt halt => ?_, hs⟩
-    simpa using List.find?_eq_none.mp h alt halt
-
-lemma subset_step (acc : Finset Rel) (u : Disjunction) : acc ⊆ step acc u := by
-  rcases step_cases acc u with ⟨alt, _, _, h⟩ | ⟨_, h⟩ <;> rw [h]
-  exact Finset.subset_union_left
-
-lemma step_feasible {acc : Finset Rel} (u : Disjunction) (h : RFeasible acc) :
-    RFeasible (step acc u) := by
-  rcases step_cases acc u with ⟨alt, _, hF, hs⟩ | ⟨_, hs⟩ <;> rw [hs]
-  · exact hF
-  · exact h
-
-lemma greedyFrom_cons (acc : Finset Rel) (u : Disjunction) (us : List Disjunction) :
-    greedyFrom acc (u :: us) = greedyFrom (step acc u) us := rfl
-
-lemma subset_greedyFrom (acc : Finset Rel) (L : List Disjunction) :
-    acc ⊆ greedyFrom acc L := by
-  induction L generalizing acc with
-  | nil => exact subset_refl acc
-  | cons u us ih =>
-    rw [greedyFrom_cons]
-    exact (subset_step acc u).trans (ih _)
-
-lemma greedyFrom_feasible {acc : Finset Rel} (L : List Disjunction)
-    (h : RFeasible acc) : RFeasible (greedyFrom acc L) := by
-  induction L generalizing acc with
-  | nil => exact h
-  | cons u us ih =>
-    rw [greedyFrom_cons]
-    exact ih (step_feasible u h)
-
-lemma greedyFrom_head (acc : Finset Rel) (u : Disjunction) (us : List Disjunction) :
-    Kept (greedyFrom acc (u :: us)) u ∨
-    ∀ alt ∈ u, ¬ RFeasible (greedyFrom acc (u :: us) ∪ alt) := by
-  rw [greedyFrom_cons]
-  rcases step_cases acc u with ⟨alt, halt, _, hs⟩ | ⟨hnone, _⟩
-  · left
-    have h : alt ⊆ step acc u := by rw [hs]; exact Finset.subset_union_right
-    exact ⟨alt, halt, h.trans (subset_greedyFrom _ _)⟩
-  · right
-    intro alt halt hF
-    exact hnone alt halt (rfeasible_mono
-      (Finset.union_subset_union_left
-        ((subset_step acc u).trans (subset_greedyFrom _ _))) hF)
-
-lemma greedyFrom_dichotomy (acc : Finset Rel) (L : List Disjunction) :
-    ∀ u ∈ L, Kept (greedyFrom acc L) u ∨
-      ∀ alt ∈ u, ¬ RFeasible (greedyFrom acc L ∪ alt) := by
-  induction L generalizing acc with
-  | nil => intro u hu; cases hu
-  | cons v vs ih =>
-    intro u hu
-    rcases List.mem_cons.mp hu with huv | hu'
-    · rw [huv]; exact greedyFrom_head acc v vs
-    · rw [greedyFrom_cons]; exact ih _ u hu'
-
-lemma mem_greedyFrom (acc : Finset Rel) (L : List Disjunction) :
-    ∀ r ∈ greedyFrom acc L, r ∈ acc ∨ ∃ u ∈ L, ∃ alt ∈ u, r ∈ alt := by
-  induction L generalizing acc with
-  | nil => intro r hr; exact Or.inl hr
-  | cons u us ih =>
-    intro r hr
-    rw [greedyFrom_cons] at hr
-    rcases ih _ r hr with h | ⟨u', hu', alt, halt, hr'⟩
-    · rcases step_cases acc u with ⟨alt, halt, _, hs⟩ | ⟨_, hs⟩
-      · rw [hs] at h
-        rcases Finset.mem_union.mp h with h | h
-        · exact Or.inl h
-        · exact Or.inr ⟨u, List.mem_cons.mpr (Or.inl rfl), alt, halt, h⟩
-      · rw [hs] at h
-        exact Or.inl h
-    · exact Or.inr ⟨u', List.mem_cons.mpr (Or.inr hu'), alt, halt, hr'⟩
-
-/-- The kept relations have a well-formed realization. -/
-theorem greedy_feasible (L : List Disjunction) (hWF : WF.Nonempty) :
-    RFeasible (greedy L) :=
-  greedyFrom_feasible L (rfeasible_empty hWF)
-
-/-- **Each disjunction has a kept branch, or every branch is infeasible.** If a
-    disjunction is dropped, each of its alternatives conflicts with the kept
-    relations. -/
-theorem greedy_dichotomy (L : List Disjunction) {u : Disjunction} (hu : u ∈ L) :
-    Kept (greedy L) u ∨ ∀ alt ∈ u, ¬ RFeasible (greedy L ∪ alt) :=
-  greedyFrom_dichotomy ∅ L u hu
 
 /-- A kept disjunction holds in each realization of the kept relations. -/
 theorem kept_disjunction_satisfied {K : Finset Rel} {u : Disjunction} (hu : Kept K u)
@@ -713,32 +622,6 @@ theorem violated_has_dropped_disjunction {K : Finset Rel} {q : QualifiedConstrai
   by_contra hNo
   push_neg at hNo
   exact hViol (kept_constraint_satisfied hsrc hNo hR)
-
-/-- For a conjunction of individual relations, the kept set is a maximal feasible subset
-    of those relations, for any supplied order. -/
-theorem greedy_conjuncts_isMFS (l : List Rel) (hWF : WF.Nonempty) :
-    IsMFS RFeasible l.toFinset (greedy (conjuncts l)) := by
-  refine ⟨?_, greedy_feasible _ hWF, ?_⟩
-  · intro r hr
-    rcases mem_greedyFrom ∅ (conjuncts l) r hr with h | ⟨u, hu, alt, halt, hr'⟩
-    · exact absurd h (Finset.notMem_empty r)
-    · obtain ⟨r', hr'l, rfl⟩ := List.mem_map.mp hu
-      rw [List.mem_singleton] at halt
-      rw [halt, Finset.mem_singleton] at hr'
-      rw [hr']
-      exact List.mem_toFinset.mpr hr'l
-  · intro c hc hcK hF
-    have hu : [{c}] ∈ conjuncts l :=
-      List.mem_map.mpr ⟨c, List.mem_toFinset.mp hc, rfl⟩
-    rcases greedy_dichotomy (conjuncts l) hu with ⟨alt, halt, hsub⟩ | hBlocked
-    · rw [List.mem_singleton] at halt
-      rw [halt] at hsub
-      exact hcK (hsub (Finset.mem_singleton_self c))
-    · refine hBlocked {c} (List.mem_singleton.mpr rfl) (rfeasible_mono ?_ hF)
-      intro x hx
-      simp only [Finset.mem_union, Finset.mem_singleton, Finset.mem_insert]
-        at hx ⊢
-      tauto
 
 --------------------------------------------------------------------------------
 -- 5. Examples
@@ -820,31 +703,33 @@ lemma leftOfRel_both_infeasible (a b : Atom) :
   exact leftOf_both_absurd
     (hR (leftOfRel a b) (by simp)) (hR (leftOfRel b a) (by simp))
 
-open Classical in
-private lemma step_one (acc alt : Finset Rel) :
-    step acc [alt] = if RFeasible (acc ∪ alt) then acc ∪ alt else acc := by
-  by_cases hf : RFeasible (acc ∪ alt) <;> simp [step, pick, List.find?, hf]
-
-/-- On (a, b), `left` followed by `directlyRight` keeps b left of a and the
-    horizontal alignment from `directlyRight`. Only the conflicting order is dropped. -/
+/-- With `left` and `directlyRight` on the same pair, one maximum feasible subset
+    keeps the order from `left` and the horizontal alignment from `directlyRight`. -/
 theorem directlyRight_partial_keep (a b : Atom) (hab : a ≠ b) :
-    ∃ ds, translateProgram? [⟨.orientation {(a, b)} .left, .always⟩,
-                             ⟨.orientation {(a, b)} .directlyRight, .always⟩] = some ds ∧
-      greedy ds = {.left b a, .aligned_h a b} := by
-  refine ⟨conjuncts [.left b a, .left a b, .aligned_h a b], ?_, ?_⟩
+    ∃ rs : List Rel,
+      translateProgram? [⟨.orientation {(a, b)} .left, .always⟩,
+                         ⟨.orientation {(a, b)} .directlyRight, .always⟩] =
+        some (conjuncts rs) ∧
+      IsMaximumFeasible RFeasible rs.toFinset {.left b a, .aligned_h a b} := by
+  refine ⟨[.left b a, .left a b, .aligned_h a b], ?_, ?_⟩
   · simp [translateProgram?, translate?, pairConstraints, Finset.toList_singleton,
       orientationRels, conjuncts]
-  · have hLeft := leftOfRel_feasible b a hab.symm
-    have hConflict := leftOfRel_both_infeasible a b
-    have hBoth : RFeasible {Rel.aligned_h a b, .left b a} := by
-      refine ⟨twoBoxes b a, twoBoxes_wf b a, fun r hr => ?_⟩
+  · simp only [List.toFinset_cons, List.toFinset_nil, Finset.insert_empty]
+    refine ⟨by simp, ?_, ?_⟩
+    · refine ⟨twoBoxes b a, twoBoxes_wf b a, fun r hr => ?_⟩
       simp only [Finset.mem_insert, Finset.mem_singleton] at hr
       rcases hr with rfl | rfl <;>
         norm_num [holds, lift_pair, twoBoxes, hab, hab.symm, leftOf, aligned_h]
-    change step (step (step ∅ [{Rel.left b a}]) [{.left a b}]) [{.aligned_h a b}] = _
-    simp [step_one, leftOfRel] at hLeft hConflict ⊢
-    simp [hLeft, hConflict, hBoth]
-    exact Finset.pair_comm _ _
+    · intro S sub feasible
+      have proper : S ≠ {Rel.left b a, .left a b, .aligned_h a b} := by
+        rintro rfl
+        apply leftOfRel_both_infeasible a b (rfeasible_mono ?_ feasible)
+        intro r hr
+        simp only [Finset.mem_insert, Finset.mem_singleton, leftOfRel] at hr ⊢
+        tauto
+      have smaller := Finset.card_lt_card (Finset.ssubset_iff_subset_ne.mpr ⟨sub, proper⟩)
+      rw [Finset.card_pair (by simp)]
+      exact Nat.le_of_lt_succ (smaller.trans_le Finset.card_le_three)
 
 /-- **A part is kept, a part is dropped.** Let the program be the one
     constraint "`a` is left of `b` and `b` is left of `a`", with `a ≠ b`.
@@ -878,39 +763,6 @@ theorem partial_keep (a b : Atom) (hab : a ≠ b) :
       (by rw [hEmpty]; exact Finset.notMem_empty _)
     rw [hEmpty] at hMax
     exact hMax (by simpa using leftOfRel_feasible a b hab)
-
-/-- **The commitment is not maximal.** The first disjunction has two
-    alternatives: "`a` is left of `b`" or "`b` is left of `a`". The
-    second disjunction has one: "`b` is left of `a`". The greedy pass commits to
-    the first alternative of the first disjunction, and then it must drop the
-    second disjunction. But the two disjunctions can hold together. -/
-theorem commit_not_maximal (a b : Atom) (hab : a ≠ b) :
-    greedy [[{leftOfRel a b}, {leftOfRel b a}], [{leftOfRel b a}]]
-      = {leftOfRel a b} ∧
-    ∃ R ∈ WF, modelsDisjunction R [{leftOfRel a b}, {leftOfRel b a}] ∧
-              modelsDisjunction R [{leftOfRel b a}] := by
-  refine ⟨?_, ?_⟩
-  · have hA : RFeasible (∅ ∪ {leftOfRel a b}) := by
-      simpa using leftOfRel_feasible a b hab
-    have hAB : ¬ RFeasible ({leftOfRel a b} ∪ {leftOfRel b a}) := by
-      rw [← Finset.insert_eq]; exact leftOfRel_both_infeasible a b
-    have h1 : step ∅ [{leftOfRel a b}, {leftOfRel b a}] = {leftOfRel a b} := by
-      have hp : pick ∅ [{leftOfRel a b}, {leftOfRel b a}]
-          = some {leftOfRel a b} := by
-        unfold pick
-        exact List.find?_cons_of_pos (by simpa using hA)
-      simp [step, hp]
-    have h2 : step {leftOfRel a b} [{leftOfRel b a}] = {leftOfRel a b} := by
-      rcases step_cases {leftOfRel a b} [{leftOfRel b a}] with
-        ⟨alt, halt, hF, _⟩ | ⟨_, hs⟩
-      · rw [List.mem_singleton] at halt
-        rw [halt] at hF
-        exact absurd hF hAB
-      · exact hs
-    show step (step ∅ _) _ = _
-    rw [h1, h2]
-  · obtain ⟨R, hWF, hR⟩ := leftOfRel_feasible b a hab.symm
-    exact ⟨R, hWF, ⟨{leftOfRel b a}, by simp, hR⟩, ⟨{leftOfRel b a}, by simp, hR⟩⟩
 
 end Counterfactual
 end Spytial
