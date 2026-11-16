@@ -53,12 +53,30 @@ This Lean file (`Main.lean`) formalizes:
    - **Monotonicity**: Larger programs have smaller denotations (`P ⊆ Q ⟹ ⟦Q⟧ ⊆ ⟦P⟧`)
    - **Unsatisfiability**: A program is unsat iff its denotation is empty
 
-[`Counterfactuals.lean`](Counterfactuals.lean) describes the counterfactual diagram
-at the **diagram element level**. Orientation, alignment, and cyclic constraints give
-rise to relations between pairs of atoms. For example, `directlyRight` requires both
-a left/right order and horizontal alignment. When another constraint conflicts with
-the order, the counterfactual diagram can still satisfy the alignment. For a cyclic
-constraint, all pairwise relations for one rotation must hold together.
+`IsCounterfactual` defines which drawings qualify as counterfactuals. On the branch
+used for the reported IIS, the drawing must realize a **maximum-cardinality feasible
+subset of the diagram-element requirements**. Several subsets can tie for the maximum.
+Every counterfactual drawing violates at least one requirement from every IIS on the
+branch (`counterfactual_violates_each_iis`).
+
+The counting unit is a diagram-element requirement. For example, `directlyRight`
+requires both an order and horizontal alignment. If the order conflicts, a
+maximum feasible subset can still retain the alignment. A selected cyclic
+rotation contributes its individual pairwise relations. A group side and a
+never-group inclusion witness each count once, even when they require several
+relations to hold together.
+
+`BranchFeasible` means that a single well-formed
+realization satisfies every relation in the retained requirements.
+`first_repair_isMaximum` proves optimality for search by increasing deletion
+budget, assuming downward-closed feasibility and a valid conflict extractor.
+`exists_first_repair` proves that a successful budget exists when the empty
+set is feasible. [Counterfactuals.lean](Counterfactuals.lean)
+
+In the three-box example, the rectangle must contain exactly 0 and 2. If the
+counterfactual keeps the equal-height row 0, 1, 2, every rectangle containing
+both endpoints also contains 1. `row_middle_violates_exact_group` proves that
+this violates the source-level group requirement.
 
 ## Theorems You Can Check
 
