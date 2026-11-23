@@ -166,10 +166,11 @@ def translate_cyclic_pair (dims : DimCtx) (L : List Atom) (i j k : Nat)
     | .eq => [LinearIneq.eq (.x ai) (.x aj)]
     | .lt => [LinearIneq.le (.x ai) (dims.width ai) (.x aj)]
     | .gt => [LinearIneq.le (.x aj) (dims.width aj) (.x ai)]
+  -- Screen Y increases downward, as in Main.vrel.
   let v_ineqs := match oracle.sin_cmp n i j k with
     | .eq => [LinearIneq.eq (.y ai) (.y aj)]
-    | .gt => [LinearIneq.le (.y ai) (dims.height ai) (.y aj)]
-    | .lt => [LinearIneq.le (.y aj) (dims.height aj) (.y ai)]
+    | .lt => [LinearIneq.le (.y ai) (dims.height ai) (.y aj)]
+    | .gt => [LinearIneq.le (.y aj) (dims.height aj) (.y ai)]
   h_ineqs ++ v_ineqs
 
 /-- Emit all pair constraints for a single path L at a single offset k. -/
@@ -893,10 +894,10 @@ private theorem cyclic_pair_vrel_sound
   obtain ⟨_, _, _, hsin_lt, hsin_eq, hsin_gt⟩ := h_oracle L.length i j k
   dsimp only
   rcases h_sin : oracle.sin_cmp L.length i j k with _ | _ | _
-  · -- .lt: sin θi < sin θj → above bj bi
+  · -- .lt: sin θi < sin θj → above bi bj
     have hlt := hsin_lt.mp h_sin
-    rw [if_neg (ne_of_lt hlt), if_neg (not_lt.mpr (le_of_lt hlt))]; simp only [above]
-    have hmem : LinearIneq.le (.y L[j]!) (dims.height L[j]!) (.y L[i]!) ∈
+    rw [if_neg (ne_of_lt hlt), if_pos hlt]; simp only [above]
+    have hmem : LinearIneq.le (.y L[i]!) (dims.height L[i]!) (.y L[j]!) ∈
         translate_cyclic_pair dims L i j k oracle := by
       simp [translate_cyclic_pair, h_sin]
     have h_ineq := h_sat _ hmem
@@ -910,10 +911,10 @@ private theorem cyclic_pair_vrel_sound
     have h_ineq := h_sat _ hmem
     simp only [satisfies_ineq_strict] at h_ineq
     rw [hai, haj]; exact h_ineq
-  · -- .gt: sin θi > sin θj → above bi bj
+  · -- .gt: sin θi > sin θj → above bj bi
     have hgt := hsin_gt.mp h_sin
-    rw [if_neg (ne_of_gt hgt), if_pos hgt]; simp only [above]
-    have hmem : LinearIneq.le (.y L[i]!) (dims.height L[i]!) (.y L[j]!) ∈
+    rw [if_neg (ne_of_gt hgt), if_neg (not_lt.mpr (le_of_lt hgt))]; simp only [above]
+    have hmem : LinearIneq.le (.y L[j]!) (dims.height L[j]!) (.y L[i]!) ∈
         translate_cyclic_pair dims L i j k oracle := by
       simp [translate_cyclic_pair, h_sin]
     have h_ineq := h_sat _ hmem
@@ -1036,8 +1037,8 @@ private theorem cyclic_pair_vrel_complete
     (ineq : LinearIneq)
     (hineq : ineq ∈ (match oracle.sin_cmp L.length i j k with
       | .eq => [LinearIneq.eq (.y L[i]!) (.y L[j]!)]
-      | .gt => [LinearIneq.le (.y L[i]!) (dims.height L[i]!) (.y L[j]!)]
-      | .lt => [LinearIneq.le (.y L[j]!) (dims.height L[j]!) (.y L[i]!)])) :
+      | .lt => [LinearIneq.le (.y L[i]!) (dims.height L[i]!) (.y L[j]!)]
+      | .gt => [LinearIneq.le (.y L[j]!) (dims.height L[j]!) (.y L[i]!)])) :
     satisfies_ineq (extract_assignment R) ineq := by
   obtain ⟨bi, bj, hRi, hRj, h_cond⟩ := h_vrel
   dsimp only at h_cond
@@ -1049,23 +1050,23 @@ private theorem cyclic_pair_vrel_complete
   obtain ⟨_, hhj⟩ := h_dims L[j]! bj hRj'
   obtain ⟨_, _, _, hsin_lt, hsin_eq, hsin_gt⟩ := h_oracle L.length i j k
   rcases h_sin : oracle.sin_cmp L.length i j k with _ | _ | _
-  · -- .lt → above bj bi
+  · -- .lt → above bi bj
     rw [h_sin] at hineq; simp only [List.mem_cons, List.mem_nil_iff, or_false] at hineq; subst hineq
     have hlt := hsin_lt.mp h_sin
-    rw [if_neg (ne_of_lt hlt), if_neg (not_lt.mpr (le_of_lt hlt))] at h_cond
-    simp only [satisfies_ineq, extract_y R L[j]! bj hRj', extract_y R L[i]! bi hRi']
-    simp only [above] at h_cond; rw [← hhj]; linarith
+    rw [if_neg (ne_of_lt hlt), if_pos hlt] at h_cond
+    simp only [satisfies_ineq, extract_y R L[i]! bi hRi', extract_y R L[j]! bj hRj']
+    simp only [above] at h_cond; rw [← hhi]; linarith
   · -- .eq → aligned_h bi bj
     rw [h_sin] at hineq; simp only [List.mem_cons, List.mem_nil_iff, or_false] at hineq; subst hineq
     rw [if_pos (hsin_eq.mp h_sin)] at h_cond
     simp only [satisfies_ineq, extract_y R L[i]! bi hRi', extract_y R L[j]! bj hRj']
     simp only [aligned_h] at h_cond; exact h_cond
-  · -- .gt → above bi bj
+  · -- .gt → above bj bi
     rw [h_sin] at hineq; simp only [List.mem_cons, List.mem_nil_iff, or_false] at hineq; subst hineq
     have hgt := hsin_gt.mp h_sin
-    rw [if_neg (ne_of_gt hgt), if_pos hgt] at h_cond
-    simp only [satisfies_ineq, extract_y R L[i]! bi hRi', extract_y R L[j]! bj hRj']
-    simp only [above] at h_cond; rw [← hhi]; linarith
+    rw [if_neg (ne_of_gt hgt), if_neg (not_lt.mpr (le_of_lt hgt))] at h_cond
+    simp only [satisfies_ineq, extract_y R L[j]! bj hRj', extract_y R L[i]! bi hRi']
+    simp only [above] at h_cond; rw [← hhj]; linarith
 
 /-- Per-path completeness: if allPairs_ok holds at offset k, the extracted
     assignment satisfies translate_cyclic_path_at_k. -/
